@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #f6f4ee;
+  --paper-2: #efece4;
+  --ink: #1b1a17;
+  --ink-2: #4a4843;
+  --muted: #7a776f;
+  --faint: #b9b5aa;
+  --line: #e2ded4;
+  /* The palette generator writes these two; everything else follows. */
+  --accent-light: #b7502f;
+  --accent-dark: #d9765a;
+  --accent: var(--accent-light);
+  /* Overridden just below wherever color-mix works, which is everywhere current. */
+  --selection: #e9dccb;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #121210;
+    --paper-2: #191917;
+    --ink: #e8e5dd;
+    --ink-2: #b9b5aa;
+    --muted: #85827a;
+    --faint: #4d4b45;
+    --line: #262522;
+    --accent: var(--accent-dark);
+    --selection: #34302a;
+    color-scheme: dark;
+  }
+}
+
+/* A wash of whatever the accent currently is, so the highlight follows the
+   colour chosen in `palette` rather than sitting at a fixed beige. */
+@supports (color: color-mix(in oklab, red, red)) {
+  :root {
+    --selection: color-mix(in oklab, var(--accent) 30%, transparent);
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-instrument-serif), ui-serif, Georgia, serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--selection);
+  color: var(--ink);
+  text-shadow: none;
+}
+
+::-moz-selection {
+  background: var(--selection);
+  color: var(--ink);
+  text-shadow: none;
+}
+
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+}
+
+@utility prose-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--faint);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color 200ms var(--ease-out-quart);
+  &:hover {
+    text-decoration-color: var(--accent);
+  }
+}
+
+@utility label {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+@utility hairline {
+  border-top: 1px solid var(--line);
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
