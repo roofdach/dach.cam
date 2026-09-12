@@ -14,13 +14,15 @@ npm run check    # the logic checks, no framework
 
 ## the projects
 
-| | what it is | where |
-| --- | --- | --- |
-| **palette** | one colour in, an eleven-step tailwind v4 scale out, kept inside srgb and checked for contrast | `/work/palette` |
-| **pulse** | a developer analytics dashboard on generated data, or on a real public repository read straight from github's api | `/work/pulse` |
-| **together** | a shared document over a real sequence crdt. anyone with the link edits the same copy | `/work/together` |
-| **snip** | eight conversions — json, base64, url, colour, hash, jwt, time, text — done entirely in the browser | `/work/snip` |
-| **field** | a grid of glyphs standing in for pixels, exportable as a react component, an html file or an svg | `/work/field` |
+| | what it is | here | on its own |
+| --- | --- | --- | --- |
+| **palette** | one colour in, an eleven-step tailwind v4 scale out, kept inside srgb and checked for contrast | `/work/palette` | [source](https://github.com/roofdach/palette) |
+| **pulse** | a developer analytics dashboard on generated data, or on a real public repository read straight from github's api | `/work/pulse` | [source](https://github.com/roofdach/pulse) |
+| **together** | a shared document over a real sequence crdt. anyone with the link edits the same copy | `/work/together` | [source](https://github.com/roofdach/together) |
+| **snip** | eight conversions — json, base64, url, colour, hash, jwt, time, text — done entirely in the browser | `/work/snip` | [source](https://github.com/roofdach/snip) |
+| **field** | a grid of glyphs standing in for pixels, exportable as a react component, an html file or an svg | `/work/field` | [source](https://github.com/roofdach/field) |
+
+each project also lives in a repository of its own as a standalone app — clone, `npm install`, `npm run dev`. the copy here and the copy there are the same code; the site is where they run.
 
 pick a colour in **palette** and tick "use this colour across the site" and the whole site follows it: links, charts, focus rings and the text selection. it writes two values, one per colour scheme, and an inline script applies them before the first paint so there is no flash of the old colour.
 

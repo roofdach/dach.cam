@@ -8,6 +8,8 @@ export interface Project {
   note?: string;
   /** Where the working version lives. */
   href: string;
+  /** Where the source lives. */
+  repo: string;
   stack: string[];
   preview: PreviewKind;
   featured?: boolean;
@@ -17,6 +19,7 @@ export const projects: Project[] = [
   {
     slug: "palette",
     href: "/work/palette",
+    repo: "https://github.com/roofdach/palette",
     title: "palette",
     year: "2026",
     description:
@@ -29,6 +32,7 @@ export const projects: Project[] = [
   {
     slug: "pulse",
     href: "/work/pulse",
+    repo: "https://github.com/roofdach/pulse",
     title: "pulse",
     year: "2026",
     description:
@@ -40,6 +44,7 @@ export const projects: Project[] = [
   {
     slug: "together",
     href: "/work/together",
+    repo: "https://github.com/roofdach/together",
     title: "together",
     year: "2025",
     description:
@@ -51,6 +56,7 @@ export const projects: Project[] = [
   {
     slug: "snip",
     href: "/work/snip",
+    repo: "https://github.com/roofdach/snip",
     title: "snip",
     year: "2025",
     description:
@@ -62,6 +68,7 @@ export const projects: Project[] = [
   {
     slug: "field",
     href: "/work/field",
+    repo: "https://github.com/roofdach/field",
     title: "field",
     year: "2026",
     description:

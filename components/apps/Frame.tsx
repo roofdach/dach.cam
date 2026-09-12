@@ -32,7 +32,15 @@ export function Frame({ slug, children, tagline, notes, wide = false }: FramePro
             /
           </span>
           <span className="text-ink">{project.title}</span>
-          <span className="label ml-auto tnum">{project.year}</span>
+          <a
+            href={project.repo}
+            target="_blank"
+            rel="noreferrer"
+            className="ml-auto text-muted transition-colors hover:text-ink"
+          >
+            source
+          </a>
+          <span className="label tnum">{project.year}</span>
         </div>
 
         <div className="mt-7 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-b border-line pb-5">
