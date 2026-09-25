@@ -1,6 +1,6 @@
 import { DynamicPresence } from "@/components/DynamicPresence";
 import { siteConfig } from "@/config/site";
-import { projects } from "@/data/projects";
+import { games } from "@/data/games";
 
 /** Links off the site open in a new tab; `mailto:` and the like don't need one. */
 function newTab(href: string) {
@@ -26,17 +26,17 @@ export default function Home() {
           <DynamicPresence />
         </section>
 
-        <section aria-labelledby="projects" className="mt-16">
-          <h2 id="projects" className="text-muted">
-            projects
+        <section aria-labelledby="games" className="mt-16">
+          <h2 id="games" className="text-muted">
+            games
           </h2>
           <ul className="mt-4 space-y-2">
-            {projects.map((project) => (
-              <li key={project.title}>
-                <a href={project.href} className="prose-link" {...newTab(project.href)}>
-                  {project.title}
+            {games.map((game) => (
+              <li key={game.title}>
+                <a href={game.href} className="prose-link" {...newTab(game.href)}>
+                  {game.title}
                 </a>
-                <span className="text-muted"> &mdash; {project.description}</span>
+                <span className="text-muted"> &mdash; {game.description}</span>
               </li>
             ))}
           </ul>

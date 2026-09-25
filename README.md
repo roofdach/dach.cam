@@ -1,6 +1,6 @@
 # personal site
 
-one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of projects, and a few links. and at `/cookie`, a cookie clicker.
+one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the one game so far is a cookie clicker, at `/cookie`.
 
 ## running it
 
@@ -15,7 +15,7 @@ npm run check    # the logic checks, no framework
 ## making it yours
 
 - [`config/site.ts`](config/site.ts) — name, age, location, the discord id, and the links at the bottom of the page. the discord id is never shown on the page.
-- [`data/projects.ts`](data/projects.ts) — the projects. each one is a title, one line of description and a link.
+- [`data/games.ts`](data/games.ts) — the games. each one is a title, one line of description and a link.
 
 for the "right now i'm…" sentence to work, your account needs to be in the [lanyard discord server](https://discord.gg/lanyard) so lanyard can see your presence. until lanyard answers, the sentence stays hidden rather than guessing; if it never does, it says you're away from the keyboard.
 
@@ -44,7 +44,7 @@ app/og/               the link preview image
 components/           the presence sentence
 components/cookie/    the game's screen, its loop, saving and tabs
 config/site.ts        everything personal
-data/projects.ts      the projects
+data/games.ts         the games
 lib/cookie/           the game itself: buildings, upgrades, achievements, the engine, saves
 lib/lanyard/          client, presence logic, types, hook
 lib/origin.ts         which domain a request came in on

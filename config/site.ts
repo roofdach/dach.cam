@@ -11,7 +11,7 @@ export interface SiteConfig {
   description: string;
 }
 
-// Everything personal lives here. The projects are in data/projects.ts.
+// Everything personal lives here. The games are in data/games.ts.
 export const siteConfig: SiteConfig = {
   name: "dach",
   age: 16,
