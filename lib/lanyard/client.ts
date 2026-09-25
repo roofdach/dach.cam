@@ -80,7 +80,8 @@ export function subscribePresence(userId: string, handlers: LanyardHandlers): La
   const connect = () => {
     if (closed || typeof WebSocket === "undefined") return;
     clearTimers();
-    setState("connecting");
+    // No "connecting" here: the reader starts out waiting, and a retry in the
+    // background shouldn't take back an answer they've already been shown.
 
     try {
       socket = new WebSocket(SOCKET_URL);

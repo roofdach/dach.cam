@@ -8,3 +8,15 @@ export function requestOrigin(headers: Headers, fallback: string): string {
   const protocol = headers.get("x-forwarded-proto") ?? (/^(localhost|127\.|\[::1\])/.test(host) ? "http" : "https");
   return `${protocol.split(",")[0]}://${host}`;
 }
+
+/**
+ * The hostname as a reader would write it: no port, no `www.`, and nothing that
+ * doesn't look like a domain. Anything else gets the fallback.
+ */
+export function labelForHost(host: string | null, fallback: string): string {
+  const cleaned = (host ?? "")
+    .split(":")[0]
+    .replace(/^www\./i, "")
+    .toLowerCase();
+  return /^[a-z0-9.-]+\.[a-z]{2,}$/.test(cleaned) ? cleaned : fallback;
+}

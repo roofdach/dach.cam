@@ -1,28 +1,13 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
+import { Geist } from "next/font/google";
 import { headers } from "next/headers";
 import { siteConfig } from "@/config/site";
-import { ACCENT_SCRIPT } from "@/lib/accent";
 import { requestOrigin } from "@/lib/origin";
 import "./globals.css";
 
-const geistSans = Geist({
+const geist = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
-  display: "swap",
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-  display: "swap",
-});
-
-const instrumentSerif = Instrument_Serif({
-  variable: "--font-instrument-serif",
-  subsets: ["latin"],
-  weight: "400",
-  style: ["normal", "italic"],
   display: "swap",
 });
 
@@ -63,16 +48,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html
-      lang="en"
-      suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} ${instrumentSerif.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col">
-        {/* Before the first paint, so a chosen accent never flashes the default one. */}
-        <script dangerouslySetInnerHTML={{ __html: ACCENT_SCRIPT }} />
-        {children}
-      </body>
+    <html lang="en" className={`${geist.variable} antialiased`}>
+      <body>{children}</body>
     </html>
   );
 }

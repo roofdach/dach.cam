@@ -1,4 +1,4 @@
-import { ActivityType, type LanyardActivity, type LanyardData } from "./types";
+import { ActivityType, type LanyardActivity, type LanyardData } from "./types.ts";
 
 /**
  * A description of what someone is doing, written to complete the sentence

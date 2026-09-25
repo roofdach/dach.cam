@@ -1,52 +1,24 @@
 /**
- * One runnable check for the logic behind the four projects. No framework:
+ * One runnable check for the logic behind the site and the cookie clicker. No framework:
  * `npm run check` either prints a list of ticks or throws.
  *
- * Anything that needs a canvas, a DOM or a network is left to the browser;
- * what is here is the part that would be silently wrong.
+ * Anything that needs a DOM or a network is left to the browser; what is here
+ * is the part that would be silently wrong.
  */
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { Script } from "node:vm";
+import { readFileSync } from "node:fs";
 
-import { Doc, diffText, keyBetween, keysBetween, type Op } from "../lib/together/doc.ts";
-import {
-  DEFAULT_OPTIONS,
-  buildRamp,
-  fromBase64,
-  parseColor,
-  rgbToHsl,
-  rgbToOklch,
-  oklchToRgb,
-  run,
-  runHash,
-  toBase64,
-  contrastRatio,
-} from "../lib/snip/tools.ts";
-import { DEFAULT_SETTINGS, createState, gridFor, sampleField } from "../lib/field/sim.ts";
-import { checkFont, textMask } from "../lib/field/text.ts";
-import { toHtml, toReact } from "../lib/field/export.ts";
-import { fieldToSvg } from "../lib/field/svg.ts";
-import { labelForHost, previewSvg } from "../lib/field/preview-image.ts";
-import { clampChroma, inGamut } from "../lib/color.ts";
-import { STEPS, buildScale, serialise } from "../lib/palette/scale.ts";
-import { requestOrigin } from "../lib/origin.ts";
-import { ACCENT_SCRIPT, isAccent } from "../lib/accent.ts";
-import {
-  bucketByDay,
-  buildDemo,
-  contributors,
-  dayStarts,
-  latencyHistogram,
-  quantile,
-  reviewLatencies,
-  trend,
-  weekdayHistogram,
-} from "../lib/pulse/dataset.ts";
-import { buildPath, resample, smooth } from "../lib/pulse/chart.ts";
-import { parseRepo } from "../lib/pulse/github.ts";
+import { ActivityType, type LanyardActivity, type LanyardData, type LanyardSpotify } from "../lib/lanyard/types.ts";
+import { describePresence, FALLBACK_PRESENCE, formatArtists } from "../lib/lanyard/presence.ts";
+import { labelForHost, requestOrigin } from "../lib/origin.ts";
+import { ACHIEVEMENTS, ACHIEVEMENT_BY_ID } from "../lib/cookie/achievements.ts";
+import { BUILDINGS, CURSOR, GRANDMA } from "../lib/cookie/buildings.ts";
+import * as game from "../lib/cookie/engine.ts";
+import { formatClock, formatDuration, formatNumber } from "../lib/cookie/format.ts";
+import { pickHeadline } from "../lib/cookie/news.ts";
+import { decodeImport, encodeExport, parseSave, serialize } from "../lib/cookie/save.ts";
+import { HEAVENLY, HEAVENLY_BY_ID, TIERS, UPGRADES, UPGRADE_BY_ID } from "../lib/cookie/upgrades.ts";
 
 const results: string[] = [];
 async function check(name: string, body: () => void | Promise<void>) {
@@ -54,437 +26,82 @@ async function check(name: string, body: () => void | Promise<void>) {
   results.push(name);
 }
 
-/* --------------------------------------------------------------- together */
+/* --------------------------------------------------------------- presence */
 
-await check("fractional keys stay ordered under repeated splitting", () => {
-  const keys = [keyBetween(null, null)];
-  for (let round = 0; round < 400; round++) {
-    const at = Math.floor(Math.random() * (keys.length + 1));
-    const left = at > 0 ? keys[at - 1] : null;
-    const right = at < keys.length ? keys[at] : null;
-    const key = keyBetween(left, right);
-    if (left !== null) assert.ok(left < key, `${left} < ${key}`);
-    if (right !== null) assert.ok(key < right, `${key} < ${right}`);
-    keys.splice(at, 0, key);
-  }
-  assert.deepEqual(keys, [...keys].sort(), "keys must already be in order");
-  assert.equal(new Set(keys).size, keys.length, "keys must be unique");
-  assert.ok(keys.every((k) => !k.endsWith("0")), "no key may end in the lowest digit");
+const user: LanyardData = {
+  discord_user: { id: "1", username: "someone", avatar: null },
+  discord_status: "online",
+  activities: [],
+  listening_to_spotify: false,
+  spotify: null,
+};
+
+const song = (title: string, artist: string): Pick<LanyardData, "listening_to_spotify" | "spotify"> => ({
+  listening_to_spotify: true,
+  spotify: { track_id: null, timestamps: {}, song: title, artist, album: "", album_art_url: null } satisfies LanyardSpotify,
 });
 
-await check("keysBetween hands back an ascending run", () => {
-  const run = keysBetween("1", "2", 5);
-  assert.equal(run.length, 5);
-  assert.deepEqual(run, [...run].sort());
-  assert.ok(run.every((k) => k > "1" && k < "2"));
+const activity = (name: string, type: number, start = 1): LanyardActivity => ({
+  id: name,
+  name,
+  type,
+  timestamps: { start },
 });
 
-await check("diffText finds the smallest single change", () => {
-  assert.equal(diffText("abc", "abc"), null);
-  assert.deepEqual(diffText("abc", "abXc"), { index: 2, removed: 0, inserted: "X" });
-  assert.deepEqual(diffText("abc", "ac"), { index: 1, removed: 1, inserted: "" });
-  assert.deepEqual(diffText("", "hi"), { index: 0, removed: 0, inserted: "hi" });
-  assert.deepEqual(diffText("hi", ""), { index: 0, removed: 2, inserted: "" });
+await check("with nothing going on, the status finishes the sentence", () => {
+  assert.equal(describePresence(null), FALLBACK_PRESENCE);
+  assert.equal(describePresence(user).phrase, "around");
+  assert.equal(describePresence({ ...user, discord_status: "dnd" }).phrase, "heads down");
+  assert.equal(describePresence({ ...user, discord_status: "idle" }), FALLBACK_PRESENCE);
+  assert.equal(describePresence({ ...user, discord_status: "offline" }), FALLBACK_PRESENCE);
 });
 
-await check("an edit leaves the document holding exactly what was typed", () => {
-  const doc = new Doc("a");
-  let text = "";
-  for (const next of ["hello", "hello world", "hell world", "hell, world!", "", "back again"]) {
-    doc.edit(text, next);
-    assert.equal(doc.text(), next);
-    text = next;
-  }
-});
-
-await check("two documents converge after concurrent edits", () => {
-  const seed = (() => {
-    const d = new Doc("seed");
-    d.insertAt(0, "the quick brown fox");
-    return d.ops();
-  })();
-
-  for (let round = 0; round < 60; round++) {
-    const a = new Doc("a");
-    const b = new Doc("b");
-    a.applyAll(seed);
-    b.applyAll(seed);
-
-    const pending: { from: Doc; to: Doc; ops: Op[] }[] = [];
-    for (let turn = 0; turn < 8; turn++) {
-      const [doc, other] = Math.random() < 0.5 ? [a, b] : [b, a];
-      const at = Math.floor(Math.random() * (doc.length + 1));
-      const ops =
-        Math.random() < 0.6
-          ? doc.insertAt(at, Math.random().toString(36).slice(2, 5))
-          : doc.deleteAt(at, 1 + Math.floor(Math.random() * 3));
-      if (ops.length) pending.push({ from: doc, to: other, ops });
-    }
-
-    // Deliver out of order, and twice, to prove ops are idempotent.
-    for (const delivery of [...pending].sort(() => Math.random() - 0.5)) delivery.to.applyAll(delivery.ops);
-    for (const delivery of pending) delivery.to.applyAll(delivery.ops);
-
-    assert.equal(a.text(), b.text(), `round ${round}`);
-  }
-});
-
-await check("a delete arriving before its insert still removes the character", () => {
-  const a = new Doc("a");
-  const b = new Doc("b");
-  const insert = a.insertAt(0, "x");
-  const remove = a.deleteAt(0, 1);
-  b.applyAll(remove);
-  b.applyAll(insert);
-  assert.equal(b.text(), "");
-  assert.equal(a.text(), "");
-});
-
-/* ------------------------------------------------------------------- snip */
-
-await check("base64 survives a round trip, including non-ascii", () => {
-  for (const value of ["the quick brown fox", "héllo wörld", "🌍 ok", ""]) {
-    assert.equal(fromBase64(toBase64(value)), value);
-    assert.equal(fromBase64(toBase64(value, true)), value, "url-safe alphabet");
-  }
-  assert.equal(toBase64("hi"), "aGk=");
-  assert.equal(toBase64("hi", true), "aGk");
-});
-
-await check("colours parse from every notation and come back the same", () => {
-  const orange = parseColor("#b7502f")!;
-  assert.deepEqual(orange, { r: 183, g: 80, b: 47 });
-  assert.deepEqual(parseColor("#b52"), { r: 187, g: 85, b: 34 });
-  assert.deepEqual(parseColor("rgb(183 80 47)"), orange);
-  assert.deepEqual(parseColor("red"), { r: 255, g: 0, b: 0 });
-  assert.equal(parseColor("not a colour"), null);
-
-  // hsl is displayed rounded to whole numbers, so the trip back lands within a step.
-  const hsl = rgbToHsl(orange);
-  const viaHsl = parseColor(`hsl(${hsl.h} ${hsl.s}% ${hsl.l}%)`)!;
-  for (const key of ["r", "g", "b"] as const) {
-    assert.ok(Math.abs(viaHsl[key] - orange[key]) <= 2, `${key} survives hsl within two steps`);
-  }
-
-  const oklch = rgbToOklch(orange);
-  const back = oklchToRgb(oklch.l, oklch.c, oklch.h);
-  for (const key of ["r", "g", "b"] as const) {
-    assert.ok(Math.abs(back[key] - orange[key]) <= 1, `${key} round trip within one step`);
-  }
-  assert.deepEqual(parseColor(`oklch(${oklch.l} ${oklch.c} ${oklch.h})`), back);
-});
-
-await check("contrast ratios match the wcag definition", () => {
-  const white = { r: 255, g: 255, b: 255 };
-  const black = { r: 0, g: 0, b: 0 };
-  assert.equal(contrastRatio(white, black).toFixed(2), "21.00");
-  assert.equal(contrastRatio(white, white).toFixed(2), "1.00");
-});
-
-await check("the ramp is light to dark and all valid hex", () => {
-  const ramp = buildRamp(parseColor("#b7502f")!);
-  assert.equal(ramp.length, 9);
-  assert.ok(ramp.every((step) => /^#[0-9a-f]{6}$/.test(step)), "every step is hex");
-  const lightness = ramp.map((step) => rgbToOklch(parseColor(step)!).l);
-  for (let i = 1; i < lightness.length; i++) assert.ok(lightness[i] < lightness[i - 1], "ramp darkens");
-});
-
-await check("json formats, sorts and reports where it broke", () => {
-  const sorted = run("json", '{"b":1,"a":{"d":2,"c":3}}', { ...DEFAULT_OPTIONS, sortKeys: true });
-  assert.ok(sorted.ok && sorted.output.startsWith('{\n  "a"'), "keys sort, deeply");
-  assert.ok(sorted.ok && sorted.output.includes('"c": 3'));
-
-  const minified = run("json", '{"a": 1}', { ...DEFAULT_OPTIONS, indent: 0 });
-  assert.ok(minified.ok && minified.output === '{"a":1}');
-
-  // When the engine reports a position, say where. When it doesn't, still say
-  // something short instead of quoting the whole document back.
-  const located = run("json", '{"a": 1,, "b": 2}', DEFAULT_OPTIONS);
-  assert.ok(!located.ok && /line 1, column 9/.test(located.error), located.ok ? "" : located.error);
-
-  const vague = run("json", '{\n  "a": 1,\n  "b":\n}', DEFAULT_OPTIONS);
-  assert.ok(!vague.ok, "an unfinished value is an error");
-  if (!vague.ok) {
-    assert.ok(!/is not valid json/.test(vague.error), `no engine noise: ${vague.error}`);
-    assert.ok(!vague.error.includes('"a"'), "the document is not quoted back");
-    assert.ok(vague.error.length < 60, `short: ${vague.error}`);
-  }
-
-  const bareWord = run("json", "undefined", DEFAULT_OPTIONS);
-  assert.ok(!bareWord.ok && bareWord.error === "that isn't valid json", bareWord.ok ? "" : bareWord.error);
-});
-
-await check("url encoding round trips and a whole url gets pulled apart", () => {
-  const encoded = run("url", "hello world&x=1", DEFAULT_OPTIONS);
-  assert.ok(encoded.ok && encoded.output === "hello%20world%26x%3D1");
-  const decoded = run("url", encoded.output, { ...DEFAULT_OPTIONS, mode: "decode" });
-  assert.ok(decoded.ok && decoded.output === "hello world&x=1");
-
-  const parsed = run("url", "https://example.com/a?q=hi&lang=en#top", DEFAULT_OPTIONS);
-  assert.ok(parsed.ok && parsed.table, "a url produces a table");
-  const rows = Object.fromEntries(parsed.ok ? parsed.table!.rows.map((r) => [r.label, r.value]) : []);
-  assert.equal(rows.host, "example.com");
-  assert.equal(rows.q, "hi");
-  assert.equal(rows.hash, "top");
-});
-
-await check("jwt decodes without pretending to verify", () => {
-  const header = toBase64(JSON.stringify({ alg: "HS256", typ: "JWT" }), true);
-  const payload = toBase64(JSON.stringify({ sub: "1", exp: 1767225600 }), true);
-  const result = run("jwt", `${header}.${payload}.signature`, DEFAULT_OPTIONS);
-  assert.ok(result.ok, "decodes");
-  const extra = Object.fromEntries(result.ok ? (result.extra ?? []).map((e) => [e.label, e.value]) : []);
-  assert.equal(extra.alg, "HS256");
-  assert.ok(extra.signature.includes("not checked"));
-  assert.ok(!run("jwt", "nonsense", DEFAULT_OPTIONS).ok, "nonsense is rejected");
-});
-
-await check("times read as epoch seconds, milliseconds or iso", () => {
-  const seconds = run("time", "1767225600", DEFAULT_OPTIONS);
-  assert.ok(seconds.ok && seconds.output === "2026-01-01T00:00:00.000Z");
-  const millis = run("time", "1767225600000", DEFAULT_OPTIONS);
-  assert.ok(millis.ok && millis.output === "2026-01-01T00:00:00.000Z");
-  const iso = run("time", "2026-01-01T00:00:00Z", DEFAULT_OPTIONS);
-  assert.ok(iso.ok && iso.output === "2026-01-01T00:00:00.000Z");
-  assert.ok(!run("time", "next tuesday-ish", DEFAULT_OPTIONS).ok);
-});
-
-await check("text conversions handle the cases people actually paste", () => {
-  const result = run("text", "the quickBrown fox_jumps", DEFAULT_OPTIONS);
-  assert.ok(result.ok && result.table);
-  const rows = Object.fromEntries(result.ok ? result.table!.rows.map((r) => [r.label, r.value]) : []);
-  assert.equal(rows.camelCase, "theQuickBrownFoxJumps");
-  assert.equal(rows["snake_case"], "the_quick_brown_fox_jumps");
-  assert.equal(rows["kebab-case"], "the-quick-brown-fox-jumps");
-  assert.equal(run("text", "Héllo, Wörld!", DEFAULT_OPTIONS).ok, true);
-  const slug = run("text", "Héllo, Wörld!", DEFAULT_OPTIONS);
-  assert.equal(slug.ok ? slug.table!.rows.find((r) => r.label === "slug")!.value : "", "hello-world");
-});
-
-await check("hashing matches the published digests", async () => {
-  const sha256 = await runHash("abc", "SHA-256");
-  assert.ok(sha256.ok);
-  assert.equal(sha256.ok ? sha256.output : "", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-  const sha1 = await runHash("abc", "SHA-1");
-  assert.equal(sha1.ok ? sha1.output : "", "a9993e364706816aba3e25717850c26c9cd0d89d");
-});
-
-await check("empty input is never an error", () => {
-  for (const tool of ["json", "base64", "url", "color", "jwt", "time", "text"] as const) {
-    const result = run(tool, "   ", DEFAULT_OPTIONS);
-    assert.ok(result.ok && result.output === "", `${tool} on blank input`);
-  }
-});
-
-/* ------------------------------------------------------------------ field */
-
-await check("the field is finite everywhere and moves with time", () => {
-  const state = createState();
-  const { cols, rows } = gridFor(800, 400, 16);
-  assert.equal(cols, 50);
-  assert.equal(rows, 25);
-
-  let sum = 0;
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      const v = sampleField(x, y, cols, rows, DEFAULT_SETTINGS, state);
-      assert.ok(Number.isFinite(v), `finite at ${x},${y}`);
-      sum += v;
-    }
-  }
-  state.time = 3.5;
-  let later = 0;
-  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) later += sampleField(x, y, cols, rows, DEFAULT_SETTINGS, state);
-  assert.notEqual(sum.toFixed(4), later.toFixed(4), "the wave travels");
-});
-
-await check("the pointer raises the field around it", () => {
-  const state = createState();
-  const flat = sampleField(10, 10, 40, 20, DEFAULT_SETTINGS, state);
-  state.pointer = { x: 10, y: 10 };
-  const bulged = sampleField(10, 10, 40, 20, DEFAULT_SETTINGS, state);
-  assert.ok(bulged > flat, "under the pointer the value rises");
-  assert.ok(Math.abs(sampleField(38, 19, 40, 20, DEFAULT_SETTINGS, state) - sampleField(38, 19, 40, 20, DEFAULT_SETTINGS, { ...state, pointer: null })) < 0.01, "and barely moves far away");
-});
-
-await check("inverting mirrors the field", () => {
-  const state = createState();
-  const normal = sampleField(4, 7, 40, 20, DEFAULT_SETTINGS, state);
-  const inverted = sampleField(4, 7, 40, 20, { ...DEFAULT_SETTINGS, invert: true }, state);
-  assert.ok(Math.abs(normal + inverted - 1) < 1e-9);
-});
-
-/* ------------------------------------------------------------------ pulse */
-
-await check("days bucket into the calendar they belong to", () => {
-  const now = new Date(2026, 0, 15, 13, 0, 0).getTime();
-  const starts = dayStarts(now, 7);
-  assert.equal(starts.length, 7);
-  assert.equal(new Date(starts[6]).getDate(), 15, "the last day is today");
-  assert.equal(new Date(starts[0]).getDate(), 9);
-
-  const counts = bucketByDay(
-    [
-      { ts: now, author: "a", message: "today" },
-      { ts: starts[0] + 60_000, author: "a", message: "oldest day" },
-      { ts: starts[0] - 60_000, author: "a", message: "too old" },
-    ],
-    starts,
+await check("music and games are described, together when both are on", () => {
+  assert.equal(describePresence({ ...user, ...song("halo", "beyoncé") }).phrase, "listening to halo by beyoncé");
+  assert.equal(describePresence({ ...user, activities: [activity("minecraft", ActivityType.Playing)] }).phrase, "playing minecraft");
+  assert.equal(describePresence({ ...user, activities: [activity("a film", ActivityType.Watching)] }).phrase, "watching a film");
+  assert.equal(
+    describePresence({ ...user, ...song("halo", "beyoncé"), activities: [activity("minecraft", ActivityType.Playing)] }).phrase,
+    "playing minecraft and listening to halo by beyoncé",
   );
-  assert.deepEqual(counts, [1, 0, 0, 0, 0, 0, 1]);
 });
 
-await check("quantiles, trend and histograms agree with the arithmetic", () => {
-  assert.equal(quantile([1, 2, 3, 4], 0.5), 2.5);
-  assert.equal(quantile([1, 2, 3, 4], 0), 1);
-  assert.equal(quantile([], 0.5), 0);
-  assert.equal(trend([1, 1, 2, 2]), 100);
-  assert.equal(trend([2, 2, 1, 1]), -50);
-  assert.equal(trend([0, 0, 0, 0]), 0);
-
-  const latencies = reviewLatencies([
-    { number: 1, title: "", author: "a", created: 0, merged: 3_600_000 },
-    { number: 2, title: "", author: "a", created: 0, merged: null },
-    { number: 3, title: "", author: "b", created: 0, merged: 36_000_000 },
-  ]);
-  assert.deepEqual(latencies, [1, 10]);
-  const bins = latencyHistogram(latencies);
-  assert.equal(bins.find((b) => b.label === "1–4h")!.count, 1);
-  assert.equal(bins.find((b) => b.label === "4–12h")!.count, 1);
-  assert.equal(bins.reduce((a, b) => a + b.count, 0), latencies.length);
+await check("custom statuses and spotify's own activity are not things you're doing", () => {
+  const noise = [activity("hello", ActivityType.Custom), activity("Spotify", ActivityType.Listening)];
+  assert.equal(describePresence({ ...user, activities: noise }).phrase, "around");
 });
 
-await check("contributors rank by commits and count merged pulls", () => {
-  const rows = contributors(
-    [
-      { ts: 1, author: "mara", message: "" },
-      { ts: 2, author: "mara", message: "" },
-      { ts: 3, author: "iko", message: "" },
-    ],
-    [{ number: 1, title: "", author: "iko", created: 0, merged: 1 }],
+await check("the most recently started activity wins", () => {
+  const activities = [activity("chess", ActivityType.Playing, 100), activity("minecraft", ActivityType.Playing, 200)];
+  assert.equal(describePresence({ ...user, activities }).phrase, "playing minecraft");
+});
+
+await check("a long phrase gives up detail rather than running on", () => {
+  const long = "a".repeat(80);
+  assert.equal(describePresence({ ...user, ...song(long, "someone") }).phrase, `listening to ${long}`);
+  assert.equal(describePresence({ ...user, ...song("a".repeat(120), "someone") }).phrase, "listening to music");
+  assert.equal(
+    describePresence({ ...user, ...song(long, "someone"), activities: [activity("minecraft", ActivityType.Playing)] }).phrase,
+    "playing minecraft with music on",
   );
-  assert.deepEqual(
-    rows.map((r) => [r.name, r.commits, r.pulls]),
-    [
-      ["mara", 2, 0],
-      ["iko", 1, 1],
-    ],
-  );
-  assert.equal(rows[0].share, 1);
 });
 
-await check("weekday buckets start on monday", () => {
-  const monday = new Date(2026, 0, 5, 12).getTime();
-  const sunday = new Date(2026, 0, 11, 12).getTime();
-  const days = weekdayHistogram([
-    { ts: monday, author: "a", message: "" },
-    { ts: sunday, author: "a", message: "" },
-  ]);
-  assert.deepEqual(days, [1, 0, 0, 0, 0, 0, 1]);
+await check("the key changes exactly when the words do", () => {
+  const a = describePresence({ ...user, ...song("halo", "beyoncé") });
+  const b = describePresence({ ...user, ...song("halo", "beyoncé") });
+  const c = describePresence({ ...user, ...song("crazy in love", "beyoncé") });
+  assert.equal(a.key, b.key);
+  assert.notEqual(a.key, c.key);
 });
 
-await check("resampling keeps the ends and evens out the middle", () => {
-  assert.deepEqual(resample([0, 10], 5), [0, 2.5, 5, 7.5, 10]);
-  assert.deepEqual(resample([4], 3), [4, 4, 4]);
-  assert.deepEqual(resample([], 2), [0, 0]);
-  assert.equal(resample([1, 2, 3], 48).length, 48, "every range yields the same point count");
-  assert.deepEqual(smooth([0, 3, 0], 3), [1.5, 1, 1.5]);
+await check("artists read the way a person would list them", () => {
+  assert.equal(formatArtists("beyoncé"), "beyoncé");
+  assert.equal(formatArtists("beyoncé; jay-z"), "beyoncé and jay-z");
+  assert.equal(formatArtists("a; b; c"), "a");
+  assert.equal(formatArtists(" a ;  "), "a");
 });
 
-await check("paths are built from finite numbers and close when asked", () => {
-  const box = { width: 300, height: 200, top: 10, right: 5, bottom: 20, left: 5 };
-  const line = buildPath([1, 5, 2], box, 10, false);
-  const area = buildPath([1, 5, 2], box, 10, true);
-  assert.ok(line.startsWith("M "), "starts with a move");
-  assert.ok(!/NaN|Infinity/.test(line + area), "no NaN anywhere");
-  assert.ok(area.endsWith("Z"), "the area closes");
-  assert.equal(buildPath([1], box, 10, false), "", "one point is not a line");
-});
-
-await check("the demo dataset stays inside its own window", () => {
-  const now = new Date(2026, 5, 1, 18, 30).getTime();
-  const data = buildDemo(now);
-  const oldest = dayStarts(now, 90)[0];
-  assert.ok(data.commits.length > 200, `enough commits, got ${data.commits.length}`);
-  assert.ok(data.commits.every((c) => c.ts <= now && c.ts >= oldest), "nothing outside the window");
-  assert.ok(data.pulls.every((p) => p.created <= now), "no pull request from the future");
-  assert.ok(data.pulls.every((p) => p.merged === null || p.merged >= p.created), "merges follow their opening");
-  assert.deepEqual(
-    data.commits.map((c) => c.ts),
-    [...data.commits.map((c) => c.ts)].sort((a, b) => b - a),
-    "newest first",
-  );
-  assert.deepEqual(buildDemo(now).commits.length, data.commits.length, "and it is deterministic");
-  assert.ok(data.languages.length > 0 && data.canFilterByLanguage);
-});
-
-await check("repository names parse out of anything someone might paste", () => {
-  const expected = { owner: "vercel", name: "next.js" };
-  for (const input of [
-    "vercel/next.js",
-    " vercel/next.js ",
-    "https://github.com/vercel/next.js",
-    "github.com/vercel/next.js",
-    "https://www.github.com/vercel/next.js.git",
-    "https://github.com/vercel/next.js/tree/canary",
-  ]) {
-    assert.deepEqual(parseRepo(input), expected, input);
-  }
-  assert.equal(parseRepo("nonsense"), null);
-  assert.equal(parseRepo(""), null);
-});
-
-/* ------------------------------------------------------- field, on a server */
-
-await check("every glyph in the stencil alphabet is the shape it claims to be", () => {
-  checkFont();
-  assert.equal(textMask("", 40, 20), null, "nothing to draw");
-  assert.equal(textMask("hi", 3, 3), null, "nowhere to draw it");
-});
-
-await check("a stencil is centred, upright and made only of what it can draw", () => {
-  const cols = 92;
-  const rows = 44;
-  const mask = textMask("dach.cam", cols, rows)!;
-  assert.ok(mask, "there is a mask");
-
-  const filled: { x: number; y: number }[] = [];
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) if (mask.data[y * cols + x]) filled.push({ x, y });
-  }
-  assert.ok(filled.length > 100, `enough ink, got ${filled.length}`);
-
-  const left = Math.min(...filled.map((p) => p.x));
-  const right = Math.max(...filled.map((p) => p.x));
-  const top = Math.min(...filled.map((p) => p.y));
-  const bottom = Math.max(...filled.map((p) => p.y));
-  assert.ok(Math.abs(left - (cols - 1 - right)) <= 1, "centred across");
-  assert.ok(Math.abs(top - (rows - 1 - bottom)) <= 1, "centred down");
-  assert.ok(right < cols && bottom < rows, "inside the grid");
-
-  // Characters with no glyph are dropped rather than drawn as a blank box.
-  const ignored = textMask("d★d", cols, rows)!;
-  const same = textMask("dd", cols, rows)!;
-  assert.deepEqual([...ignored.data], [...same.data], "an unknown character leaves no gap");
-});
-
-await check("the link preview is a valid, self-contained svg", () => {
-  const svg = previewSvg("dachh.cc");
-  assert.ok(svg.startsWith("<svg "), "starts as svg");
-  assert.ok(svg.endsWith("</svg>"), "and finishes");
-  assert.ok(!svg.includes("<text"), "no text elements, so no font is needed");
-  assert.ok((svg.match(/<circle/g) ?? []).length > 1000, "the field is actually drawn");
-  assert.ok(!/NaN|Infinity|undefined/.test(svg), "no broken numbers");
-
-  const empty = fieldToSvg({
-    width: 200,
-    height: 100,
-    settings: DEFAULT_SETTINGS,
-    state: createState(),
-    palette: { paper: "#000000", ink: "#ffffff", accent: "#ff0000" },
-  });
-  assert.ok(empty.includes("<rect"), "there is always a background");
-});
+/* ----------------------------------------------------------------- domain */
 
 await check("a host becomes the name a reader would recognise", () => {
   assert.equal(labelForHost("dach.cam", "fallback"), "dach.cam");
@@ -504,151 +121,781 @@ await check("the origin follows the proxy, not the socket", () => {
   assert.equal(of({ host: "not a host" }), "https://fallback.example");
 });
 
-await check("an exported field runs on its own", () => {
-  const options = {
-    settings: { ...DEFAULT_SETTINGS, glyphs: "dots" as const, color: "duotone" as const, cell: 12 },
-    stencil: "hello",
-    ink: "#1b1a17",
-    accent: "#b7502f",
-    paper: "#f6f4ee",
+/* ----------------------------------------------------------------- cookie */
+
+const NOW = 1_700_000_000_000;
+const FARM = 2;
+const MINE = 3;
+
+/** The same numbers every time, cycling. */
+const sequence =
+  (...values: number[]) =>
+  () => {
+    const value = values.shift()!;
+    values.push(value);
+    return value;
   };
 
-  const html = toHtml(options);
-  const script = html.slice(html.indexOf("<script>") + 8, html.indexOf("</script>"));
-  // Parsing without running proves the generated javascript is at least valid.
-  new Script(script, { filename: "field-export.js" });
-  assert.ok(!/\bimport\b|\brequire\(/.test(script), "nothing to install");
-  assert.ok(html.includes("<canvas"), "and something to draw on");
-
-  const react = toReact(options);
-  assert.ok(react.startsWith('"use client";'), "usable in an app router project");
-  assert.ok(react.includes("export function Field"), "exports the component");
-  assert.ok(/from "react"/.test(react), "react is the only import");
-  assert.equal(react.match(/^import /gm)?.length, 1, "exactly one import");
-});
-
-await check("the exported react component compiles under strict typescript", () => {
-  const dir = ".check-tmp";
-  const file = `${dir}/Field.tsx`;
-  const config = `${dir}/tsconfig.json`;
-  mkdirSync(dir, { recursive: true });
-  try {
-    writeFileSync(
-      file,
-      toReact({
-        settings: { ...DEFAULT_SETTINGS, glyphs: "braille", color: "ink" },
-        stencil: "",
-        ink: "#1b1a17",
-        accent: "#b7502f",
-        paper: "#f6f4ee",
-      }),
-    );
-    writeFileSync(config, JSON.stringify({ extends: "../tsconfig.json", include: ["Field.tsx"] }));
-    const tsc = "node_modules/typescript/bin/tsc";
-    if (!existsSync(tsc)) return;
-    execFileSync(process.execPath, [tsc, "-p", config, "--noEmit"], { stdio: "pipe" });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-/* ---------------------------------------------------------------- palette */
-
-await check("chroma is pulled back only when srgb cannot show it", () => {
-  // A vivid red at mid lightness is inside the gamut already.
-  const inside = rgbToOklch(parseColor("#b7502f")!);
-  assert.equal(clampChroma(inside.l, inside.c, inside.h), inside.c, "an achievable colour is left alone");
-
-  // Nothing is that colourful at that hue, so it has to come down.
-  const pulled = clampChroma(0.5, 0.4, 150);
-  assert.ok(pulled < 0.4, "reduced");
-  assert.ok(inGamut(0.5, pulled, 150), "and now displayable");
-  assert.ok(!inGamut(0.5, pulled + 0.01, 150), "by as little as possible");
-});
-
-await check("a scale is eleven steps, light to dark, all displayable", () => {
-  const scale = buildScale(parseColor("#b7502f")!);
-  assert.deepEqual(
-    scale.swatches.map((s) => s.step),
-    [...STEPS],
-  );
-
-  for (let i = 1; i < scale.swatches.length; i++) {
-    assert.ok(scale.swatches[i].oklch.l < scale.swatches[i - 1].oklch.l, `step ${scale.swatches[i].step} is darker`);
-  }
-  for (const swatch of scale.swatches) {
-    assert.ok(/^#[0-9a-f]{6}$/.test(swatch.hex), `${swatch.step} is hex`);
-    assert.ok(inGamut(swatch.oklch.l, swatch.oklch.c, swatch.oklch.h), `${swatch.step} is inside srgb`);
-    assert.ok(swatch.contrast.white >= 1 && swatch.contrast.black >= 1, "contrast is a real ratio");
-    const best = Math.max(swatch.contrast.white, swatch.contrast.black);
-    assert.equal(swatch.ink === "black" ? swatch.contrast.black : swatch.contrast.white, best, "picks the readable one");
-  }
-
-  assert.ok(scale.swatches[0].contrast.black > scale.swatches[0].contrast.white, "the palest step wants dark text");
-  assert.ok(scale.swatches[10].contrast.white > scale.swatches[10].contrast.black, "the darkest wants light text");
-});
-
-await check("the colour you typed survives into the scale", () => {
-  const input = parseColor("#3b6ea5")!;
-  const kept = buildScale(input, { keepInput: true, name: "brand" });
-  const anchor = kept.swatches.find((s) => s.anchor)!;
-  assert.equal(anchor.hex, "#3b6ea5", "exactly, at its own step");
-  assert.equal(anchor.step, kept.anchorStep);
-  assert.equal(kept.swatches.filter((s) => s.anchor).length, 1, "only one step is yours");
-
-  const smoothed = buildScale(input, { keepInput: false, name: "brand" });
-  assert.equal(smoothed.swatches.filter((s) => s.anchor).length, 1);
-  assert.notEqual(smoothed.swatches.find((s) => s.anchor)!.hex, "#3b6ea5", "or not, if you would rather it fit the curve");
-});
-
-await check("every output format says the same thing in its own words", () => {
-  const scale = buildScale(parseColor("teal")!, { keepInput: true, name: "sea" });
-  const tailwind = serialise(scale, "tailwind");
-  assert.ok(tailwind.startsWith("@theme {"), "tailwind v4 uses @theme");
-  assert.ok(tailwind.includes("--color-sea-500: oklch("), "named and in oklch");
-  assert.equal(tailwind.match(/--color-sea-/g)?.length, 11, "all eleven");
-
-  const css = serialise(scale, "css");
-  assert.ok(css.includes(":root {") && css.includes("--sea-950: #"), "plain variables are hex");
-
-  const parsed = JSON.parse(serialise(scale, "json")) as Record<string, Record<string, string>>;
-  assert.deepEqual(Object.keys(parsed.sea).map(Number), [...STEPS]);
-  assert.equal(parsed.sea[500], scale.swatches.find((s) => s.step === 500)!.hex);
-
-  assert.equal(serialise(scale, "hex").split("\n").length, 11);
-});
-
-await check("the accent script applies a stored colour and refuses anything else", () => {
-  const run = (stored: string | null) => {
-    const applied = new Map<string, string>();
-    const context = {
-      JSON,
-      localStorage: { getItem: () => stored },
-      document: { documentElement: { style: { setProperty: (key: string, value: string) => applied.set(key, value) } } },
-    };
-    // The exact string that ships in the html, run the way a browser runs it.
-    new Script(ACCENT_SCRIPT, { filename: "accent.js" }).runInNewContext(context);
-    return applied;
+/** A small seeded generator, so a failing run can be replayed. */
+function seededRandom(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
 
-  const good = run(JSON.stringify({ light: "#b7502f", dark: "#d9765a" }));
-  assert.equal(good.get("--accent-light"), "#b7502f");
-  assert.equal(good.get("--accent-dark"), "#d9765a");
+const near = (actual: number, expected: number, tolerance = 1e-9) =>
+  Math.abs(actual - expected) <= tolerance * Math.max(1, Math.abs(actual), Math.abs(expected));
+const assertNear = (actual: number, expected: number, what = "", tolerance = 1e-9) =>
+  assert.ok(near(actual, expected, tolerance), `${what} ${actual} should be ${expected}`);
+const fresh = () => game.newGame(NOW, () => 0.5);
+const frenzy = (left: number): game.Buff => ({ kind: "frenzy", building: -1, left, total: left, cps: 7, click: 1 });
 
-  for (const stored of [
-    null,
-    "not json",
-    "null",
-    JSON.stringify({ light: "#b7502f" }),
-    JSON.stringify({ light: "red", dark: "#d9765a" }),
-    JSON.stringify({ light: "#fff;}body{display:none", dark: "#d9765a" }),
+await check("the cookie tables have no duplicates and nothing missing", () => {
+  for (const [what, list] of [
+    ["buildings", BUILDINGS],
+    ["upgrades", UPGRADES],
+    ["achievements", ACHIEVEMENTS],
+    ["heavenly upgrades", HEAVENLY],
+  ] as const) {
+    assert.equal(new Set(list.map((item) => item.id)).size, list.length, `${what} ids`);
+    assert.equal(new Set(list.map((item) => item.name)).size, list.length, `${what} names`);
+    for (const item of list) assert.match(item.id, /^[a-z0-9]+(-[a-z0-9]+)*$/, item.id);
+  }
+  assert.equal(BUILDINGS.length, 20);
+  BUILDINGS.forEach((building, i) => {
+    if (i > 0) {
+      assert.ok(building.price > BUILDINGS[i - 1].price, `${building.name} costs more than the one before`);
+      assert.ok(building.cps > BUILDINGS[i - 1].cps, `${building.name} makes more than the one before`);
+    }
+    const tiers = UPGRADES.filter((u) => u.kind === "tier" && u.building === i);
+    assert.equal(tiers.length, i === CURSOR ? 0 : TIERS.length, `${building.name} tiers`);
+    const synergies = UPGRADES.filter((u) => u.kind === "synergy" && u.building === i);
+    assert.equal(synergies.length, i > GRANDMA ? 1 : 0, `${building.name} synergy`);
+  });
+  for (const upgrade of UPGRADES) {
+    assert.ok(Number.isFinite(upgrade.price) && upgrade.price > 0, upgrade.id);
+    assert.ok(upgrade.name && upgrade.effect && upgrade.icon, upgrade.id);
+  }
+  for (const achievement of ACHIEVEMENTS) assert.ok(achievement.name && achievement.desc, achievement.id);
+});
+
+await check("every id the engine names by hand exists", () => {
+  const source = readFileSync("lib/cookie/engine.ts", "utf8");
+  const named = (pattern: RegExp) => [...source.matchAll(pattern)].map((match) => match[1]);
+  const upgradeOrHeavenly = named(/\bhas\("([^"]+)"\)/g);
+  assert.ok(upgradeOrHeavenly.length > 10);
+  for (const id of upgradeOrHeavenly) assert.ok(UPGRADE_BY_ID.has(id) || HEAVENLY_BY_ID.has(id), id);
+  for (const id of named(/award\(state, "([^"]+)"\)/g)) assert.ok(ACHIEVEMENT_BY_ID.has(id), id);
+  const lists = source.split("\n").filter((line) => /"(starter-kit|guardian-angels)"/.test(line));
+  assert.equal(lists.length, 2);
+  for (const line of lists) {
+    for (const [, id] of line.matchAll(/"([^"]+)"/g)) assert.ok(HEAVENLY_BY_ID.has(id), id);
+  }
+  // Every heavenly upgrade does something.
+  for (const upgrade of HEAVENLY) assert.ok(source.includes(`"${upgrade.id}"`), upgrade.id);
+});
+
+await check("buildings cost what Cookie Clicker charges, 15% more each", () => {
+  const state = fresh();
+  const cursors: number[] = [];
+  for (let k = 0; k < 10; k++) {
+    cursors.push(game.buildingPrice(state, CURSOR));
+    state.run.owned[CURSOR] += 1;
+  }
+  assert.deepEqual(cursors, [15, 18, 20, 23, 27, 31, 35, 40, 46, 53]);
+  assert.equal(game.buildingPrice(state, GRANDMA), 100);
+  assert.equal(game.buildingPrice(state, 19), 540e24);
+  for (const owned of [0, 7, 120, 400]) {
+    state.run.owned[GRANDMA] = owned;
+    let singles = 0;
+    for (let k = 0; k < 10; k++) singles += 100 * 1.15 ** (owned + k);
+    const bulk = game.buildingPrice(state, GRANDMA, 10);
+    assert.ok(bulk >= singles * (1 - 1e-12) && bulk <= singles * (1 + 1e-12) + 1, `${owned}: ${bulk} vs ${singles}`);
+  }
+  assert.equal(game.buildingPrice(state, GRANDMA, 0), 0);
+  const start = fresh();
+  assert.ok(game.buildingVisible(start, CURSOR), "cursors are in the store from the start");
+  assert.ok(!game.buildingVisible(start, GRANDMA), "grandmas wait until 100 have been baked");
+  start.run.baked = 100;
+  assert.ok(game.buildingVisible(start, GRANDMA));
+  assert.equal(game.buildingPrice(state, 20), 0);
+  assert.equal(game.buildingPrice(state, -1), 0);
+});
+
+await check("buying spends exactly the price, and never more than there is", () => {
+  const state = fresh();
+  assert.equal(game.buyBuilding(state, CURSOR), false);
+  state.run.cookies = 100;
+  assert.equal(game.buyBuilding(state, CURSOR, 10), false, "ten cursors cost more than 100");
+  assert.equal(state.run.cookies, 100);
+  assert.equal(game.buyBuilding(state, CURSOR), true);
+  assert.equal(state.run.cookies, 85);
+  assert.equal(state.run.owned[CURSOR], 1);
+  const three = game.buildingPrice(state, CURSOR, 3);
+  assert.equal(game.buyBuilding(state, CURSOR, 3), true);
+  assert.equal(state.run.cookies, 85 - three);
+  assert.equal(state.run.owned[CURSOR], 4);
+  for (const bad of [0, 0.5, -1, NaN]) assert.equal(game.buyBuilding(state, CURSOR, bad), false, String(bad));
+  assert.equal(game.buyBuilding(state, 42), false);
+});
+
+await check("selling gives back a quarter, and only what is there", () => {
+  const state = fresh();
+  state.run.cookies = 1e6;
+  game.buyBuilding(state, GRANDMA, 10);
+  const expected = Math.floor(100 * (1.15 ** 7 + 1.15 ** 8 + 1.15 ** 9) * 0.25);
+  const before = state.run.cookies;
+  assert.equal(game.sellValue(state, GRANDMA, 3), expected);
+  assert.equal(game.sellBuilding(state, GRANDMA, 3), 3);
+  assert.equal(state.run.cookies, before + expected);
+  assert.equal(game.sellBuilding(state, GRANDMA, 100), 7, "sells whatever is left");
+  assert.equal(game.sellBuilding(state, GRANDMA), 0);
+  assert.ok(state.achievements.has("how-could-you"));
+
+  const trader = fresh();
+  trader.run.cookies = 1e14;
+  for (const building of [CURSOR, MINE, 9]) {
+    const cookies = trader.run.cookies;
+    assert.ok(game.buyBuilding(trader, building, 10));
+    assert.equal(game.sellBuilding(trader, building, 10), 10);
+    assert.ok(trader.run.cookies < cookies, "buying and selling back always loses cookies");
+  }
+});
+
+await check("selling adds up the same as pricing each building on its own", () => {
+  const state = fresh();
+  for (const [owned, free, count] of [
+    [1, 0, 1],
+    [10, 0, 3],
+    [10, 0, 10],
+    [5, 10, 5],
+    [12, 10, 5],
+    [12, 10, 12],
+    [300, 10, 150],
+    [450, 5, 100],
   ]) {
-    assert.equal(run(stored).size, 0, `refused: ${stored}`);
+    state.run.owned[GRANDMA] = owned;
+    state.run.free[GRANDMA] = free;
+    let series = 0;
+    for (let i = owned - count; i < owned; i++) series += 1.15 ** Math.max(0, i - free);
+    const expected = Math.floor(100 * series * 0.25);
+    const actual = game.sellValue(state, GRANDMA, count);
+    assert.ok(Math.abs(actual - expected) <= Math.max(1, expected * 1e-12), `${owned}/${free}/${count}: ${actual} vs ${expected}`);
+  }
+  state.run.owned[GRANDMA] = 1e15;
+  const started = performance.now();
+  game.sellValue(state, GRANDMA, 1e15);
+  game.buildingPrice(state, GRANDMA, 1e15);
+  assert.ok(performance.now() - started < 50, "no loop over a tampered count");
+});
+
+await check("buildings from a starter kit are free and don't raise the price", () => {
+  const legacy = { ...fresh().legacy, heavenly: new Set(["starter-kit", "starter-kitchen"]) };
+  const state = { ...fresh(), legacy, run: game.newRun(legacy, NOW, () => 0.5) };
+  assert.equal(state.run.owned[CURSOR], 10);
+  assert.equal(state.run.owned[GRANDMA], 5);
+  assert.equal(game.buildingPrice(state, CURSOR), 15);
+  assert.equal(game.buildingPrice(state, GRANDMA), 100);
+  state.run.owned[CURSOR] = 5;
+  assert.equal(game.buildingPrice(state, CURSOR, 5), 75, "the five sold come back at the first price");
+  assert.equal(game.buildingPrice(state, CURSOR, 6), 90);
+  assert.equal(game.buildingPrice(state, CURSOR, 7), Math.ceil(15 * (6 + 1.15)));
+});
+
+await check("production follows the upgrades", () => {
+  const state = fresh();
+  const cps = () => game.production(state).total;
+  state.run.owned[CURSOR] = 10;
+  assertNear(cps(), 1, "ten cursors");
+  for (const id of ["nimble-fingers", "hand-cream", "two-handed"]) state.run.upgrades.add(id);
+  assertNear(cps(), 8, "doubled three times");
+  state.run.owned[GRANDMA] = 5;
+  assertNear(cps(), 13, "and five grandmas");
+  state.run.upgrades.add("thousand-fingers");
+  assertNear(cps(), 8 + 10 * 0.1 * 5 + 5, "thousand fingers");
+  state.run.upgrades.add("million-fingers");
+  assertNear(cps(), 8 + 10 * 0.5 * 5 + 5, "million fingers");
+  state.run.upgrades.add("grandma-1");
+  assertNear(cps(), 8 + 25 + 10, "a grandma tier");
+  state.run.owned[FARM] = 1;
+  state.run.upgrades.add("farm-grandmas");
+  assertNear(cps(), 10 * (0.8 + 0.5 * 6) + 5 * 1 * 2 * 2 + 8 * (1 + 5 * 0.01), "farmer grandmas");
+
+  const mines = fresh();
+  mines.run.owned[GRANDMA] = 20;
+  mines.run.owned[MINE] = 10;
+  mines.run.upgrades.add("mine-grandmas");
+  assertNear(game.production(mines).total, 20 * 2 + 10 * 47 * 1.1, "one percent per two grandmas");
+});
+
+await check("multipliers stack the way they say", () => {
+  const state = fresh();
+  state.run.owned[GRANDMA] = 100;
+  const cps = () => game.production(state).total;
+  assertNear(cps(), 100);
+  state.legacy.prestige = 50;
+  assertNear(cps(), 150, "prestige");
+  state.run.upgrades.add("butter-cookies");
+  state.run.upgrades.add("coconut-macaroons");
+  assertNear(cps(), 150 * 1.01 * 1.02, "cookies");
+  for (const achievement of ACHIEVEMENTS.slice(0, 25)) state.achievements.add(achievement.id);
+  assertNear(game.milk(state), 1);
+  state.run.upgrades.add("kitten-helpers");
+  assertNear(cps(), 150 * 1.01 * 1.02 * 1.1, "kittens");
+  state.legacy.heavenly.add("heavenly-cookies");
+  state.legacy.heavenly.add("kitten-angels");
+  const base = 150 * 1.01 * 1.02 * 1.1 * 1.1 * 1.1;
+  assertNear(cps(), base, "heavenly");
+  state.run.buffs.push(frenzy(10));
+  assertNear(cps(), base * 7, "frenzy");
+  assertNear(game.production(state, false).total, base, "without buffs");
+});
+
+await check("a click is worth what the upgrades say", () => {
+  const state = fresh();
+  assert.equal(game.clickValue(state), 1);
+  for (const id of ["nimble-fingers", "hand-cream", "two-handed"]) state.run.upgrades.add(id);
+  assert.equal(game.clickValue(state), 8);
+  state.run.owned[GRANDMA] = 10;
+  state.run.upgrades.add("thousand-fingers");
+  assertNear(game.clickValue(state), 9);
+  state.run.upgrades.add("plastic-mouse");
+  state.run.upgrades.add("iron-mouse");
+  const cps = game.production(state).total;
+  assertNear(game.clickValue(state), 9 + cps * 0.02);
+  state.run.buffs.push({ kind: "click-frenzy", building: -1, left: 5, total: 5, cps: 1, click: 777 });
+  assertNear(game.clickValue(state), (9 + cps * 0.02) * 777);
+});
+
+await check("clicks count, just not faster than 250 a second", () => {
+  const state = fresh();
+  assert.equal(game.clickCookie(state, 1000), 1);
+  assert.equal(game.clickCookie(state, 1002), 0);
+  assert.equal(game.clickCookie(state, 1004), 1);
+  assert.equal(state.run.clicks, 2);
+  assert.equal(state.totals.clicks, 2);
+  assert.equal(state.run.handmade, 2);
+  assert.equal(state.run.cookies, 2);
+  assert.equal(state.run.baked, 2);
+});
+
+await check("time bakes at the going rate, and a buff only counts while it lasts", () => {
+  const state = fresh();
+  state.run.owned[GRANDMA] = 10;
+  game.advance(state, 100, false);
+  assertNear(state.run.cookies, 1000);
+  state.run.buffs.push(frenzy(77));
+  game.advance(state, 100, false);
+  assertNear(state.run.cookies, 1000 + 77 * 70 + 23 * 10, "frenzy for 77 of the 100 seconds");
+  assert.equal(state.run.buffs.length, 0);
+  assertNear(state.run.produced[GRANDMA], state.run.baked, "the grandmas made all of it");
+
+  const once = fresh();
+  const often = fresh();
+  for (const s of [once, often]) {
+    s.run.owned[MINE] = 4;
+    s.run.buffs.push(frenzy(30));
+  }
+  game.advance(once, 60, false);
+  for (let i = 0; i < 6000; i++) game.advance(often, 0.01, false);
+  assertNear(often.run.cookies, once.run.cookies, "many small steps land where one big one does", 1e-6);
+
+  const before = once.run.cookies;
+  for (const nonsense of [0, -5, NaN, Infinity]) game.advance(once, nonsense, true);
+  assert.equal(once.run.cookies, before);
+});
+
+await check("golden cookies come every five to fifteen minutes, sooner with upgrades", () => {
+  const state = fresh();
+  const random = seededRandom(7);
+  const delays = Array.from({ length: 4000 }, () => game.goldenDelay(state, random)).sort((a, b) => a - b);
+  assert.ok(delays[0] >= 300 && delays.at(-1)! <= 900);
+  const median = delays[2000];
+  assert.ok(median > 425 && median < 475, `median ${median}, expected about 449`);
+  state.run.upgrades.add("lucky-day");
+  assert.deepEqual(game.goldenTiming(state), { min: 150, max: 450, life: 26 });
+  state.run.upgrades.add("serendipity");
+  state.legacy.heavenly.add("heavenly-luck");
+  state.legacy.heavenly.add("decisive-fate");
+  const timing = game.goldenTiming(state);
+  assertNear(timing.min, 75 * 0.95);
+  assertNear(timing.life, 52 * 1.05);
+});
+
+await check("a golden cookie shows while the game is visible, and leaves if nobody clicks it", () => {
+  const state = fresh();
+  state.run.nextGolden = 10;
+  game.advance(state, 20, false);
+  assert.equal(state.run.golden, null, "not while hidden");
+  game.advance(state, 11, true);
+  assert.ok(state.run.golden, "appears");
+  game.advance(state, 12.9, true);
+  assert.ok(state.run.golden, "still there");
+  game.advance(state, 0.2, true);
+  assert.equal(state.run.golden, null, "gone");
+  assert.equal(state.totals.goldenMissed, 1);
+  assert.ok(state.run.nextGolden >= 300);
+});
+
+await check("golden cookie effects do what they say", () => {
+  const golden = (overrides: Partial<game.GoldenCookie> = {}): game.GoldenCookie => ({ x: 0.5, y: 0.5, age: 5, life: 13, ...overrides });
+
+  const lucky = fresh();
+  lucky.run.owned[GRANDMA] = 100;
+  lucky.run.cookies = 1e6;
+  lucky.run.golden = golden();
+  // no click frenzy, no building special, then the second of [frenzy, lucky]
+  const notice = game.clickGolden(lucky, sequence(0.9, 0.9, 0.6, 0.5));
+  assert.deepEqual(notice, { kind: "golden", effect: "lucky", amount: 90_013 });
+  assertNear(lucky.run.cookies, 1e6 + 90_013, "the smaller of 15% of the bank and 15 minutes of production, plus 13");
+  assert.equal(lucky.run.golden, null);
+  assert.equal(lucky.totals.goldenClicks, 1);
+  assert.equal(lucky.run.goldenClicks, 1);
+  assert.equal(game.clickGolden(lucky, Math.random), null, "only once");
+
+  const frenzied = fresh();
+  frenzied.run.golden = golden();
+  game.clickGolden(frenzied, sequence(0.9, 0.1, 0.5));
+  assert.deepEqual(frenzied.run.buffs, [frenzy(77)]);
+  frenzied.run.golden = golden();
+  frenzied.run.lastEffect = null;
+  game.clickGolden(frenzied, sequence(0.9, 0.1, 0.5));
+  assert.equal(frenzied.run.buffs.length, 1, "a second frenzy extends the first");
+  assert.equal(frenzied.run.buffs[0].left, 154);
+
+  const clicky = fresh();
+  clicky.run.golden = golden();
+  clicky.run.upgrades.add("get-lucky");
+  game.clickGolden(clicky, sequence(0.05, 0.9, 0.99, 0.5));
+  assert.deepEqual(clicky.run.buffs, [{ kind: "click-frenzy", building: -1, left: 26, total: 26, cps: 1, click: 777 }]);
+
+  const special = fresh();
+  special.run.owned[FARM] = 20;
+  special.run.golden = golden();
+  special.legacy.heavenly.add("lasting-fortune");
+  game.clickGolden(special, sequence(0.9, 0.1, 0.99, 0.5, 0.5));
+  assert.equal(special.run.buffs.length, 1);
+  const [buff] = special.run.buffs;
+  assert.equal(buff.kind, "building");
+  assert.equal(buff.building, FARM);
+  assertNear(buff.cps, 3, "10% per farm");
+  assertNear(buff.left, 33, "30 seconds, 10% longer");
+
+  // The same effect twice in a row is avoided most of the time.
+  const repeat = fresh();
+  repeat.run.golden = golden();
+  repeat.run.lastEffect = "frenzy";
+  game.clickGolden(repeat, sequence(0.9, 0.5, 0.0, 0.5));
+  assert.equal(repeat.run.lastEffect, "lucky");
+
+  const quick = fresh();
+  quick.run.golden = golden({ age: 0.5 });
+  game.clickGolden(quick, sequence(0.9, 0.9, 0.6, 0.5));
+  assert.ok(quick.achievements.has("quick-draw") && !quick.achievements.has("just-in-time"));
+  const late = fresh();
+  late.run.golden = golden({ age: 12.5 });
+  game.clickGolden(late, sequence(0.9, 0.9, 0.6, 0.5));
+  assert.ok(late.achievements.has("just-in-time") && !late.achievements.has("quick-draw"));
+});
+
+await check("upgrades appear when earned, and stay when what earned them is sold", () => {
+  const state = fresh();
+  state.run.cookies = 1e4;
+  game.buyBuilding(state, GRANDMA);
+  assert.equal(game.refreshUnlocks(state), true);
+  assert.ok(state.run.unlocked.has("grandma-1") && !state.run.unlocked.has("grandma-2"));
+  game.sellBuilding(state, GRANDMA);
+  assert.equal(game.refreshUnlocks(state), false);
+  assert.deepEqual(
+    game.availableUpgrades(state).map((u) => u.id),
+    ["grandma-1"],
+  );
+  assert.equal(game.buyUpgrade(state, "grandma-1"), true);
+  assert.equal(state.run.cookies, 1e4 - 100 + 25 - 1000);
+  assert.equal(game.buyUpgrade(state, "grandma-1"), false, "only once");
+  assert.equal(game.buyUpgrade(state, "grandma-2"), false, "not in the store yet");
+  assert.equal(game.buyUpgrade(state, "no-such-thing"), false);
+  assert.deepEqual(game.availableUpgrades(state), []);
+
+  const baker = fresh();
+  baker.run.baked = 1e6 / 20;
+  game.refreshUnlocks(baker);
+  assert.ok(baker.run.unlocked.has("butter-cookies"), "cookies show up at a twentieth of their price");
+});
+
+await check("achievements unlock at their thresholds, once each", () => {
+  const state = fresh();
+  assert.deepEqual(game.checkAchievements(state, NOW), []);
+  state.run.baked = 1000;
+  assert.deepEqual(game.checkAchievements(state, NOW).sort(), ["baked-1e0", "baked-1e3"]);
+  assert.deepEqual(game.checkAchievements(state, NOW), []);
+  assert.equal(state.notices.filter((n) => n.kind === "achievement").length, 2);
+
+  const quick = fresh();
+  quick.run.baked = 1e6;
+  const ids = game.checkAchievements(quick, NOW + 14 * 60 * 1000);
+  for (const id of ["speed-bake-1", "speed-bake-2", "speed-bake-3", "hands-off", "look-no-hands"]) assert.ok(ids.includes(id), id);
+  const slow = fresh();
+  slow.run.baked = 1e6;
+  slow.run.clicks = 16;
+  const slowIds = game.checkAchievements(slow, NOW + 30 * 60 * 1000);
+  assert.ok(slowIds.includes("speed-bake-1") && !slowIds.includes("speed-bake-2") && !slowIds.includes("hands-off"));
+
+  const collector = fresh();
+  collector.run.owned = BUILDINGS.map((_, i) => 200 - i * 10);
+  const got = new Set(game.checkAchievements(collector, NOW));
+  assert.ok(got.has("full-set") && got.has("own-cursor-200") && got.has("own-you-1"));
+  assert.ok(got.has("base-ten"), "10 of the dearest, 20 of the next, up to 200 cursors");
+  assert.ok(!got.has("centennial") && !got.has("own-you-50") && !got.has("own-cursor-250"));
+  assert.ok(got.has("powers-of-two") === BUILDINGS.every((_, i) => collector.run.owned[i] >= Math.min(2 ** (19 - i), 128)));
+
+  const stormy = fresh();
+  stormy.run.buffs.push(frenzy(5), { kind: "click-frenzy", building: -1, left: 5, total: 5, cps: 1, click: 777 });
+  assert.ok(game.checkAchievements(stormy, NOW).includes("perfect-storm"));
+});
+
+await check("prestige is the cube root of trillions baked", () => {
+  for (const [baked, level] of [
+    [0, 0],
+    [NaN, 0],
+    [-1, 0],
+    [999_999_999_999, 0],
+    [1e12, 1],
+    [8e12 - 1, 1],
+    [8e12, 2],
+    [1e15, 10],
+    [1e18, 100],
+    [1e21, 1000],
+  ]) {
+    assert.equal(game.prestigeFor(baked), level, String(baked));
+  }
+  for (const huge of [1e60, 1e200, Number.MAX_VALUE]) {
+    const started = performance.now();
+    const level = game.prestigeFor(huge);
+    assert.ok(Number.isFinite(level) && level > 0 && performance.now() - started < 50, String(huge));
+  }
+  for (let level = 1; level < 100_000; level = Math.ceil(level * 1.7)) {
+    const needed = game.bakedForPrestige(level);
+    assert.equal(game.prestigeFor(needed), level, `exactly ${level}`);
+    assert.equal(game.prestigeFor(needed * (1 - 1e-12)), level - 1, `just short of ${level}`);
+  }
+});
+
+await check("ascending turns the run into prestige and starts over", () => {
+  const state = fresh();
+  state.run.baked = 8e12;
+  state.run.cookies = 5e12;
+  state.run.owned[GRANDMA] = 50;
+  state.run.upgrades.add("grandma-1");
+  state.achievements.add("baked-1e0");
+  assert.equal(game.buyHeavenly(state, "oven-left-on"), false, "heavenly upgrades are bought in heaven");
+
+  assert.equal(game.ascend(state, NOW + 1000), 2);
+  assert.deepEqual(
+    { ...state.legacy, heavenly: [...state.legacy.heavenly] },
+    { prestige: 2, chips: 2, heavenly: [], bakedBefore: 8e12, ascensions: 1, ascending: true },
+  );
+  assert.equal(state.run.cookies, 0);
+  assert.equal(game.totalOwned(state), 0);
+  assert.equal(state.run.upgrades.size, 0);
+  assert.ok(state.achievements.has("baked-1e0"), "achievements stay");
+  assert.equal(game.ascend(state, NOW), 0, "not twice");
+  game.advance(state, 100, true);
+  game.clickCookie(state, NOW);
+  assert.equal(state.run.baked, 0, "nothing bakes in heaven");
+
+  assert.equal(game.buyHeavenly(state, "heavenly-cookies"), false, "three chips, and there are two");
+  assert.equal(game.buyHeavenly(state, "oven-left-on"), true);
+  assert.equal(state.legacy.chips, 1);
+  assert.equal(game.buyHeavenly(state, "oven-left-on"), false, "only once");
+  assert.equal(game.buyHeavenly(state, "made-up"), false);
+
+  game.reincarnate(state, NOW + 2000);
+  assert.equal(state.legacy.ascending, false);
+  assert.equal(state.run.startedAt, NOW + 2000);
+  assert.equal(game.buyHeavenly(state, "heavenly-cookies"), false, "and not after");
+
+  state.run.baked = 19e12;
+  assert.equal(game.ascend(state, NOW + 3000), 1, "8 and 19 trillion is 27, level three");
+  state.legacy.chips = 100;
+  game.buyHeavenly(state, "starter-kit");
+  game.reincarnate(state, NOW + 4000);
+  assert.equal(state.run.owned[CURSOR], 10);
+  state.run.owned[GRANDMA] = 100;
+  assertNear(game.production(state).total, (100 + 10 * 0.1) * 1.03, "three levels is +3%");
+});
+
+await check("baking while closed needs the oven left on, and slows after an hour", () => {
+  const state = fresh();
+  state.run.owned[GRANDMA] = 100;
+  assert.equal(game.offlineEarnings(state, 7200), 0);
+  state.legacy.heavenly.add("oven-left-on");
+  assertNear(game.offlineEarnings(state, 1800), 100 * 0.05 * 1800);
+  assertNear(game.offlineEarnings(state, 7200), 100 * 0.05 * (3600 + 360));
+  state.legacy.heavenly.add("guardian-angels");
+  assertNear(game.offlineEarnings(state, 100), 100 * 0.15 * 100);
+  state.run.buffs.push(frenzy(60));
+  assertNear(game.offlineEarnings(state, 100), 100 * 0.15 * 100, "buffs don't bake while closed");
+  for (const nonsense of [0, -1, NaN, Infinity]) assert.equal(game.offlineEarnings(state, nonsense), 0);
+  const amount = game.applyOffline(state, 100);
+  assertNear(state.run.cookies, amount);
+  assert.deepEqual(state.notices.at(-1), { kind: "offline", amount, seconds: 100 });
+});
+
+await check("a save reads back as the same game", () => {
+  const random = seededRandom(3);
+  const state = game.newGame(NOW, random);
+  state.run.cookies = 1e15;
+  state.run.baked = 2e15;
+  for (let i = 0; i < BUILDINGS.length; i++) game.buyBuilding(state, i, 3);
+  state.run.handmade = 1234.5;
+  state.run.clicks = 99;
+  game.refreshUnlocks(state);
+  for (const upgrade of game.availableUpgrades(state).slice(0, 12)) game.buyUpgrade(state, upgrade.id);
+  state.run.buffs.push(
+    { kind: "building", building: MINE, left: 12.5, total: 30, cps: 1.3, click: 1 },
+    frenzy(50),
+  );
+  state.run.golden = { x: 0.3, y: 0.7, age: 2, life: 13 };
+  state.run.lastEffect = "lucky";
+  state.run.free[CURSOR] = 10;
+  Object.assign(state.legacy, { prestige: 12, chips: 5, bakedBefore: 1e15, ascensions: 2 });
+  state.legacy.heavenly.add("oven-left-on");
+  state.achievements.add("baked-1e0");
+  state.achievements.add("how-could-you");
+  state.settings = { numbers: "short", effects: false, bulk: 100 };
+  Object.assign(state.totals, { newsClicks: 7, goldenMissed: 2, played: 3600.5 });
+  assert.ok(state.run.upgrades.size >= 10 && game.totalOwned(state) > 20, "the save has something in it");
+
+  const loaded = parseSave(serialize(state, NOW + 5000, "tab-a"), NOW + 10_000);
+  assert.ok(loaded);
+  assert.equal(loaded.savedAt, NOW + 5000);
+  assert.equal(loaded.owner, "tab-a");
+  const plain = (s: game.GameState) => JSON.parse(serialize(s, 0, ""));
+  assert.deepEqual(plain(loaded.state), plain(state));
+
+  const ascended = fresh();
+  ascended.run.baked = 1e13;
+  game.ascend(ascended, NOW);
+  const reloaded = parseSave(serialize(ascended, NOW, ""), NOW)!.state;
+  assert.equal(reloaded.legacy.ascending, true, "a reload in heaven stays in heaven");
+});
+
+await check("a damaged or foreign save never breaks the game", () => {
+  for (const text of ["", "{", "null", "[]", "42", '"cookie"', '{"game":"other"}', "{}", "\u0000"]) {
+    assert.equal(parseSave(text, NOW), null, JSON.stringify(text));
+  }
+  const weird = JSON.stringify({
+    game: "cookie",
+    version: 999,
+    savedAt: "yesterday",
+    owner: 5,
+    run: {
+      cookies: -5,
+      baked: NaN,
+      handmade: "lots",
+      clicks: 1.7,
+      startedAt: NOW * 2,
+      buildings: { cursor: { owned: -1, free: 2.5, produced: Infinity }, grandma: { owned: 1e400 }, nope: { owned: 5 } },
+      upgrades: ["grandma-1", "nope", 7],
+      unlocked: null,
+      buffs: [
+        { kind: "frenzy", left: 1e9, cps: 1e9 },
+        { kind: "frenzy", left: 5 },
+        { kind: "building", building: "nope", left: 5 },
+        { kind: "zap", left: 5 },
+        "x",
+        { kind: "click-frenzy", left: -1 },
+      ],
+      golden: { x: 5, y: -5, age: 100, life: 13 },
+      nextGolden: -50,
+      lastEffect: "boom",
+    },
+    legacy: { prestige: -3, chips: "9", heavenly: ["oven-left-on", "__proto__", "constructor"], ascending: "yes" },
+    totals: null,
+    achievements: ["baked-1e0", "made-up"],
+    settings: { numbers: "tiny", effects: 0, bulk: 7 },
+  });
+  const loaded = parseSave(weird, NOW);
+  assert.ok(loaded);
+  const { state } = loaded;
+  assert.equal(loaded.savedAt, NOW);
+  assert.equal(loaded.owner, "");
+  assert.equal(state.run.cookies, 0);
+  assert.equal(state.run.baked, 0);
+  assert.equal(state.run.handmade, 0);
+  assert.equal(state.run.clicks, 1);
+  assert.equal(state.run.startedAt, NOW, "a start in the future is now");
+  assert.equal(state.run.owned[CURSOR], 0);
+  assert.equal(state.run.free[CURSOR], 2);
+  assert.equal(state.run.produced[CURSOR], 0);
+  assert.equal(state.run.owned[GRANDMA], 0);
+  assert.deepEqual([...state.run.upgrades], ["grandma-1"]);
+  assert.deepEqual([...state.run.unlocked], ["grandma-1"], "anything bought was in the store");
+  assert.deepEqual(state.run.buffs, [{ kind: "frenzy", building: -1, left: 86_400, total: 86_400, cps: 7, click: 1 }]);
+  assert.equal(state.run.golden, null);
+  assert.equal(state.run.nextGolden, 0);
+  assert.equal(state.run.lastEffect, null);
+  assert.deepEqual({ ...state.legacy, heavenly: [...state.legacy.heavenly] }, {
+    prestige: 0,
+    chips: 0,
+    heavenly: ["oven-left-on"],
+    bakedBefore: 0,
+    ascensions: 0,
+    ascending: false,
+  });
+  assert.deepEqual([...state.achievements], ["baked-1e0"]);
+  assert.deepEqual(state.settings, { numbers: "long", effects: true, bulk: 1 });
+  assert.deepEqual(state.totals, { clicks: 0, handmade: 0, goldenClicks: 0, goldenMissed: 0, newsClicks: 0, startedAt: NOW, played: 0 });
+
+  // And it plays.
+  game.clickCookie(state, 1);
+  game.advance(state, 10, true);
+  game.refreshUnlocks(state);
+  game.checkAchievements(state, NOW);
+  assert.ok(state.run.cookies >= 1);
+});
+
+await check("an export pastes back in, and so does the raw json", () => {
+  const json = serialize(game.newGame(NOW), NOW, "x");
+  const code = encodeExport(json);
+  assert.match(code, /^[A-Za-z0-9+/]+=*$/);
+  assert.equal(decodeImport(code), json);
+  assert.equal(decodeImport(`  ${code.slice(0, 20)}\n${code.slice(20)}\n`), json, "line breaks from pasting");
+  assert.equal(decodeImport(json), json);
+  assert.equal(decodeImport("not a save!"), null);
+  const unicode = '{"game":"cookie","owner":"ñ 🍪"}';
+  assert.equal(decodeImport(encodeExport(unicode)), unicode);
+});
+
+await check("numbers read the way the game writes them", () => {
+  for (const [value, text] of [
+    [0, "0"],
+    [0.7, "0"],
+    [1, "1"],
+    [999_999, "999,999"],
+    [1e6, "1 million"],
+    [1_234_567, "1.235 million"],
+    [999_999_999, "1 billion"],
+    [1.5e9, "1.5 billion"],
+    [1e33, "1 decillion"],
+    [1.5e36, "1.5 undecillion"],
+    [2e45, "2 quattuordecillion"],
+    [1e63, "1 vigintillion"],
+    [1e300, "1 novemnonagintillion"],
+    [-2e6, "-2 million"],
+    [Infinity, "infinity"],
+    [NaN, "0"],
+  ] as const) {
+    assert.equal(formatNumber(value), text, String(value));
+  }
+  assert.equal(formatNumber(1.5e9, { short: true }), "1.5B");
+  assert.equal(formatNumber(1e33, { short: true }), "1Dc");
+  assert.equal(formatNumber(1e36, { short: true }), "1UnDc");
+  assert.equal(formatNumber(0.1, { decimal: true }), "0.1");
+  assert.equal(formatNumber(1234.56, { decimal: true }), "1,234.6");
+  assert.match(formatNumber(1e303), /^1\.000e303$/);
+  for (let power = 6; power < 303; power += 1) {
+    const text = formatNumber(10 ** power);
+    assert.ok(!/NaN|undefined|e\d/.test(text), `${power}: ${text}`);
+  }
+  assert.equal(formatClock(77), "1:17");
+  assert.equal(formatClock(0.2), "0:01");
+  assert.equal(formatClock(-3), "0:00");
+  assert.equal(formatDuration(0), "0 seconds");
+  assert.equal(formatDuration(1), "1 second");
+  assert.equal(formatDuration(45), "45 seconds");
+  assert.equal(formatDuration(61), "1 minute, 1 second");
+  assert.equal(formatDuration(3605), "1 hour");
+  assert.equal(formatDuration(3660), "1 hour, 1 minute");
+  assert.equal(formatDuration(90_061), "1 day, 1 hour");
+});
+
+await check("the news only reports what could be true", () => {
+  const start = { bakedAllTime: 0, owned: BUILDINGS.map(() => 0), goldenClicks: 0, ascensions: 0 };
+  const random = seededRandom(5);
+  const seen = new Set(Array.from({ length: 300 }, () => pickHeadline(start, random)));
+  assert.ok(seen.size >= 5);
+  for (const headline of seen) assert.ok(!/grandma|portal|time travel|golden/i.test(headline), headline);
+  const current = [...seen][0];
+  for (let i = 0; i < 50; i++) assert.notEqual(pickHeadline(start, random, current), current);
+  const later = { ...start, bakedAllTime: 1e20, owned: BUILDINGS.map(() => 100) };
+  assert.ok(Array.from({ length: 500 }, () => pickHeadline(later, random)).some((h) => /time travellers/i.test(h)));
+});
+
+await check("a bot plays a whole day without anything going wrong", () => {
+  const random = seededRandom(11);
+  let now = NOW;
+  const state = game.newGame(now, random);
+  const reached: Record<string, number> = {};
+
+  const buyBest = () => {
+    for (let bought = 0; bought < 50; bought++) {
+      const made = game.production(state);
+      let best = -1;
+      let bestRatio = Infinity;
+      for (let i = 0; i < BUILDINGS.length; i++) {
+        if (!game.buildingVisible(state, i)) break;
+        const gain = made.each[i] > 0 ? made.each[i] : BUILDINGS[i].cps;
+        const ratio = game.buildingPrice(state, i) / gain;
+        if (ratio < bestRatio) [best, bestRatio] = [i, ratio];
+      }
+      if (best < 0 || !game.buyBuilding(state, best)) return;
+    }
+  };
+
+  const invariants = (second: number) => {
+    const numbers = JSON.stringify(JSON.parse(serialize(state, now, "")), (_, value) => {
+      if (typeof value === "number") assert.ok(Number.isFinite(value) && value >= 0, `at ${second}s: ${value}`);
+      return value;
+    });
+    assert.ok(numbers.length > 0);
+    for (const count of state.run.owned) assert.ok(Number.isInteger(count));
+    const producedByBuildings = state.run.produced.reduce((a, b) => a + b, 0);
+    assert.ok(producedByBuildings + state.run.handmade <= state.run.baked * (1 + 1e-9), `at ${second}s the books balance`);
+    const loaded = parseSave(serialize(state, now, ""), now);
+    assert.deepEqual(JSON.parse(serialize(loaded!.state, now, "")), JSON.parse(serialize(state, now, "")));
+  };
+
+  for (let second = 1; second <= 24 * 3600; second++) {
+    now += 1000;
+    if (second <= 1800) for (let c = 0; c < 6; c++) game.clickCookie(state, now + c * 100);
+    game.advance(state, 1, true, random);
+    if (state.run.golden) game.clickGolden(state, random);
+    if (second % 5 === 0) {
+      game.refreshUnlocks(state);
+      for (const upgrade of game.availableUpgrades(state)) {
+        if (!game.buyUpgrade(state, upgrade.id)) break;
+      }
+      buyBest();
+      game.checkAchievements(state, now);
+      state.notices.length = 0;
+    }
+    for (const milestone of [1e6, 1e9, 1e12, 1e15]) {
+      if (state.run.baked >= milestone && !(milestone in reached)) reached[milestone] = second;
+    }
+    if (second % 3600 === 0) invariants(second);
   }
 
-  assert.equal(isAccent({ light: "#000000", dark: "#ffffff" }), true);
-  assert.equal(isAccent({ light: "#000", dark: "#ffffff" }), false);
-  assert.equal(isAccent(null), false);
+  const hours = (seconds: number) => (seconds / 3600).toFixed(1);
+  console.log(
+    `      the bot: ${formatNumber(state.run.baked)} baked, ${formatNumber(game.production(state).total)}/s, ` +
+      `${game.totalOwned(state)} buildings, ${state.run.upgrades.size} upgrades, ${state.achievements.size} achievements, ` +
+      `${state.totals.goldenClicks} golden; a million at ${hours(reached[1e6])}h, a billion at ${hours(reached[1e9])}h, ` +
+      `a trillion at ${hours(reached[1e12] ?? NaN)}h`,
+  );
+  assert.ok(reached[1e6] < 3600, "a million within the first hour");
+  assert.ok(reached[1e9] < 6 * 3600, "a billion within six hours");
+  assert.ok(state.totals.goldenClicks > 100, "golden cookies keep coming");
+  assert.ok(reached[1e12] < 24 * 3600, "a trillion within the day");
+  assert.ok(state.run.upgrades.has("lucky-day") && state.run.upgrades.has("serendipity"));
+  assert.ok(state.run.upgrades.has("kitten-helpers") && state.run.upgrades.has("kitten-workers"));
+  assert.ok(state.achievements.size >= 40);
 });
 
 console.log(results.map((r) => `  ok  ${r}`).join("\n"));

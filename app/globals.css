@@ -2,16 +2,10 @@
 
 :root {
   --paper: #f6f4ee;
-  --paper-2: #efece4;
   --ink: #1b1a17;
-  --ink-2: #4a4843;
-  --muted: #7a776f;
+  --muted: #6e6b63;
   --faint: #b9b5aa;
-  --line: #e2ded4;
-  /* The palette generator writes these two; everything else follows. */
-  --accent-light: #b7502f;
-  --accent-dark: #d9765a;
-  --accent: var(--accent-light);
+  --accent: #b7502f;
   /* Overridden just below wherever color-mix works, which is everywhere current. */
   --selection: #e9dccb;
   color-scheme: light;
@@ -20,20 +14,16 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --paper: #121210;
-    --paper-2: #191917;
     --ink: #e8e5dd;
-    --ink-2: #b9b5aa;
     --muted: #85827a;
     --faint: #4d4b45;
-    --line: #262522;
-    --accent: var(--accent-dark);
+    --accent: #d9765a;
     --selection: #34302a;
     color-scheme: dark;
   }
 }
 
-/* A wash of whatever the accent currently is, so the highlight follows the
-   colour chosen in `palette` rather than sitting at a fixed beige. */
+/* A wash of the accent, so the highlight matches the links. */
 @supports (color: color-mix(in oklab, red, red)) {
   :root {
     --selection: color-mix(in oklab, var(--accent) 30%, transparent);
@@ -42,30 +32,23 @@
 
 @theme inline {
   --color-paper: var(--paper);
-  --color-paper-2: var(--paper-2);
   --color-ink: var(--ink);
-  --color-ink-2: var(--ink-2);
   --color-muted: var(--muted);
   --color-faint: var(--faint);
-  --color-line: var(--line);
   --color-accent: var(--accent);
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-serif: var(--font-instrument-serif), ui-serif, Georgia, serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --animate-fade-in: fade-in 450ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
-html {
-  scroll-behavior: smooth;
-  -webkit-text-size-adjust: 100%;
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
   *,
   *::before,
   *::after {
@@ -80,19 +63,12 @@ body {
   color: var(--ink);
   font-family: var(--font-sans);
   font-feature-settings: "ss01", "cv11";
-  text-rendering: optimizeLegibility;
+  line-height: 1.75;
 }
 
 ::selection {
   background: var(--selection);
   color: var(--ink);
-  text-shadow: none;
-}
-
-::-moz-selection {
-  background: var(--selection);
-  color: var(--ink);
-  text-shadow: none;
 }
 
 @layer base {
@@ -109,31 +85,8 @@ body {
   text-decoration-color: var(--faint);
   text-decoration-thickness: 1px;
   text-underline-offset: 0.2em;
-  transition: text-decoration-color 200ms var(--ease-out-quart);
+  transition: text-decoration-color 200ms cubic-bezier(0.25, 1, 0.5, 1);
   &:hover {
     text-decoration-color: var(--accent);
   }
-}
-
-@utility label {
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-@utility hairline {
-  border-top: 1px solid var(--line);
-}
-
-@utility scrollbar-none {
-  scrollbar-width: none;
-  &::-webkit-scrollbar {
-    display: none;
-  }
-}
-
-@utility tnum {
-  font-variant-numeric: tabular-nums;
 }
