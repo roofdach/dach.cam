@@ -2,19 +2,16 @@ export interface SiteConfig {
   name: string;
   age: number;
   location: string;
+  /** Read by Lanyard to describe what you're doing. Never shown on the page. */
   discordUserId: string;
-  email: string;
-  github: string;
-  instagram: string;
-  x: string;
-  rss: string;
-  /** Shown as plain text in the contact section, e.g. "yourhandle". */
-  discordHandle: string;
+  /** The row of links at the bottom of the page, in order. */
+  links: { label: string; href: string }[];
+  /** Only a fallback, for when there is no request to read a domain from. */
   url: string;
   description: string;
 }
 
-// Everything personal lives here. Leave a link empty ("") and it won't render.
+// Everything personal lives here. The projects are in data/projects.ts.
 export const siteConfig: SiteConfig = {
   name: "dach",
   age: 16,
@@ -22,12 +19,11 @@ export const siteConfig: SiteConfig = {
 
   discordUserId: "504805980631072778",
 
-  email: "me@dachh.cc",
-  github: "https://github.com/roofdach",
-  instagram: '',
-  rss: '',
-  x: "https://x.com/dachhcc",
-  discordHandle: "dachh.cc",
+  links: [
+    { label: "github", href: "https://github.com/roofdach" },
+    { label: "x", href: "https://x.com/dachhcc" },
+    { label: "email", href: "mailto:me@dachh.cc" },
+  ],
 
   url: "https://dach.cam",
   description:
