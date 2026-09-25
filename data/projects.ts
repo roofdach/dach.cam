@@ -8,6 +8,11 @@ export interface Project {
 
 export const projects: Project[] = [
   {
+    title: "cookie",
+    description: "a cookie clicker, golden cookies and all.",
+    href: "/cookie",
+  },
+  {
     title: "palette",
     description: "one colour in, an eleven-step tailwind scale out.",
     href: "https://github.com/roofdach/palette",

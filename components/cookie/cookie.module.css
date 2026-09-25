@@ -1,0 +1,173 @@
+/* The parts of the game that are motion rather than layout. Reduced motion is
+   handled for the whole site in globals.css, which stops all of this. */
+
+.cookie {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  border-radius: 50%;
+  filter: drop-shadow(0 12px 18px rgb(74 38 12 / 0.28));
+  transition: transform 140ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+@media (hover: hover) {
+  .cookie:hover {
+    transform: scale(1.03);
+  }
+}
+
+.cookie:active {
+  transform: scale(0.95);
+  transition-duration: 50ms;
+}
+
+.cookie:focus-visible {
+  outline-offset: 6px;
+  border-radius: 50%;
+}
+
+/* Soft light turning slowly behind the cookie. */
+.rays {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 150%;
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  pointer-events: none;
+  background: repeating-conic-gradient(from 0deg, transparent 0deg 9deg, var(--ray) 9deg 18deg);
+  -webkit-mask-image: radial-gradient(circle, black 18%, transparent 62%);
+  mask-image: radial-gradient(circle, black 18%, transparent 62%);
+  animation: spin 80s linear infinite;
+  --ray: color-mix(in oklab, var(--accent) 9%, transparent);
+}
+
+.still .rays,
+.still .wave {
+  animation: none;
+}
+
+@keyframes spin {
+  to {
+    rotate: 1turn;
+  }
+}
+
+.float {
+  position: absolute;
+  pointer-events: none;
+  white-space: nowrap;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 0 var(--paper);
+  animation: float 1s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+@keyframes float {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% - 72px));
+  }
+}
+
+.crumb {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 45%;
+  background: #c98a4b;
+  pointer-events: none;
+  animation: crumb 750ms cubic-bezier(0.3, 0.6, 0.5, 1) forwards;
+}
+
+@keyframes crumb {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, -50%) rotate(0);
+  }
+  45% {
+    opacity: 1;
+    transform: translate(calc(-50% + var(--dx) * 0.6), calc(-50% + var(--dy))) rotate(90deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy) + 90px)) rotate(200deg);
+  }
+}
+
+.golden {
+  position: fixed;
+  z-index: 40;
+  translate: -50% -50%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  border-radius: 50%;
+  filter: drop-shadow(0 0 14px rgb(255 196 48 / 0.75));
+  animation: wobble 2.4s ease-in-out infinite;
+}
+
+.golden:focus-visible {
+  outline-offset: 4px;
+}
+
+@keyframes wobble {
+  0%,
+  100% {
+    transform: rotate(-7deg) scale(1);
+  }
+  50% {
+    transform: rotate(7deg) scale(1.07);
+  }
+}
+
+.milk {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  pointer-events: none;
+  transition:
+    height 1.4s cubic-bezier(0.25, 1, 0.5, 1),
+    color 1s ease;
+}
+
+.wave {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% - 1px);
+  width: 200%;
+  height: 12px;
+  animation: wave 9s linear infinite;
+}
+
+@keyframes wave {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.enter {
+  animation: enter 450ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* For inline text, where a transform wouldn't apply. */
+.fade {
+  animation: fade 600ms ease;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
