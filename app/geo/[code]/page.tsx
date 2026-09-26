@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { Geo } from "@/components/geo/Geo";
-import { CODE_PATTERN } from "@/lib/geo/server/rooms";
-import { multiplayerReady } from "@/lib/geo/server/store";
+import { CODE_PATTERN } from "@/lib/rooms/codes";
+import { multiplayerReady } from "@/lib/rooms/store";
 import { streetViewReady } from "@/lib/geo/server/lookup";
 
 export async function generateMetadata({ params }: PageProps<"/geo/[code]">): Promise<Metadata> {

@@ -7,14 +7,14 @@ import { MAPS, MAP_BY_ID } from "@/lib/geo/maps";
 import { ROUND_CHOICES, TIME_CHOICES, type GameView, type PlayerView, type RoomView, type Settings } from "@/lib/geo/room";
 import { MAX_POINTS, formatDistance, formatPoints } from "@/lib/geo/score";
 import type { LatLng } from "@/lib/geo/types";
-import { serverNow, useServerNow } from "./clock";
+import { serverNow, useServerNow } from "@/components/game/clock";
 import { Play } from "./Play";
 import { forgetPlaces, usePlaces } from "./places";
 import { PlaceFacts, PointsBar, ResultsLayout, Verdict, useAdvanceKey } from "./Results";
 import { useRoom, type RoomClient, type RoomSnapshot } from "./room-client";
 import { StreetView } from "./StreetView";
-import { KEYS, isString, load } from "./storage";
-import { Button, Choice, Spinner, formatClock, initials, ordinal, plural } from "./ui";
+import { KEYS, isString, load } from "@/components/game/storage";
+import { Button, Choice, Spinner, formatClock, initials, ordinal, plural } from "@/components/game/ui";
 
 export function Room({ code, streetView }: { code: string; streetView: boolean }) {
   const [snapshot, client] = useRoom(code);
@@ -205,7 +205,7 @@ function Lobby({ view, me, snapshot, client }: { view: RoomView; me: string; sna
         <Button onClick={copy}>{copied ? "link copied" : "copy invite link"}</Button>
       </div>
       <p className="mt-3 text-muted">
-        friends can open the link, or go to <span className="text-ink">{typeof window !== "undefined" ? window.location.host : ""}/geo</span> and type the code.
+        friends go to <span className="text-ink">{typeof window !== "undefined" ? window.location.host : ""}/geo</span> and type the code.
       </p>
 
       <section aria-labelledby="players" className="mt-10">

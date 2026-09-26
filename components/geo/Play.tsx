@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { formatPoints } from "@/lib/geo/score";
 import type { LatLng } from "@/lib/geo/types";
 import { GuessMap, type Bounds } from "./Maps";
-import { DESKTOP, Float, formatClock, useMedia } from "./ui";
+import { DESKTOP, Float, formatClock, useMedia } from "@/components/game/ui";
 
 /**
  * Everything drawn over Street View while a round is on: what map and round

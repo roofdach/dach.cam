@@ -5,13 +5,15 @@
  * checks here are just so people get a useful error instead of silence.
  */
 
-import { randomId } from "../random.ts";
+import { CODE_ALPHABET, CODE_LENGTH, cleanName, codeFrom, hashToken as hash } from "../../rooms/codes.ts";
+import { RoomError, record } from "../../rooms/http.ts";
+import type { RoomStore, Seen, StoredRoom } from "../../rooms/store.ts";
+import { randomId } from "../../random.ts";
 import {
   DEFAULT_SETTINGS,
   GRACE_MS,
   MAX_EVENTS,
   MAX_PLAYERS,
-  cleanName,
   gonePlayers,
   isPlace,
   isSettings,
@@ -22,23 +24,14 @@ import {
   type RoomEvent,
   type RoomView,
 } from "../room.ts";
-import type { RoomStore, Seen, StoredRoom } from "./store.ts";
+
+export { RoomError };
+export { CODE_PATTERN } from "../../rooms/codes.ts";
 
 /** Rooms are forgotten this long after anyone last did anything in them. */
 export const ROOM_TTL_SECONDS = 6 * 60 * 60;
 
-/** No vowels, so a code can't spell anything. */
-export const CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
-export const CODE_PATTERN = /^[BCDFGHJKLMNPQRSTVWXZ]{5}$/;
-
-export class RoomError extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = "RoomError";
-    this.status = status;
-  }
-}
+type Store = RoomStore<RoomEvent>;
 
 export interface Identity {
   id: string;
@@ -52,23 +45,10 @@ export interface RoomReply {
   you?: Identity;
 }
 
-async function hash(token: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
-}
 
-function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new RoomError(400, "that request made no sense");
-  return value as Record<string, unknown>;
-}
 
-function codeFrom(value: unknown): string {
-  const code = typeof value === "string" ? value.toUpperCase() : "";
-  if (!CODE_PATTERN.test(code)) throw new RoomError(404, "there's no room with that code");
-  return code;
-}
 
-async function load(store: RoomStore, code: string, now: number): Promise<{ stored: StoredRoom; room: Room }> {
+async function load(store: Store, code: string, now: number): Promise<{ stored: StoredRoom<RoomEvent>; room: Room }> {
   const stored = await store.read(code);
   const room = stored && reduce(stored.events, now);
   if (!stored || !room) throw new RoomError(404, "there's no room with that code, or it has expired");
@@ -76,7 +56,7 @@ async function load(store: RoomStore, code: string, now: number): Promise<{ stor
 }
 
 /** When each player was last heard from, counting only signs of life signed with their own secret. */
-function presence(room: Room, seen: StoredRoom["seen"]): Record<string, number> {
+function presence(room: Room, seen: StoredRoom<RoomEvent>["seen"]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [id, entry] of Object.entries(seen)) {
     if (room.players.get(id)?.tok === entry.tok) out[id] = entry.at;
@@ -86,9 +66,9 @@ function presence(room: Room, seen: StoredRoom["seen"]): Record<string, number> 
 
 /** Appends and replays again, reading back the log only if someone else wrote in between. */
 async function commit(
-  store: RoomStore,
+  store: Store,
   code: string,
-  stored: StoredRoom,
+  stored: StoredRoom<RoomEvent>,
   events: RoomEvent[],
   now: number,
   seen?: Seen,
@@ -106,14 +86,14 @@ async function commit(
   return { room: fresh.room, seen: presence(fresh.room, { ...fresh.stored.seen, ...mine }) };
 }
 
-export async function createRoom(store: RoomStore, input: unknown, now: number): Promise<RoomReply> {
+export async function createRoom(store: Store, input: unknown, now: number): Promise<RoomReply> {
   const name = cleanName(record(input).name);
   if (!name) throw new RoomError(400, "pick a name first");
 
   const you: Identity = { id: randomId(10), token: randomId(24) };
   const tok = await hash(you.token);
   for (let attempt = 0; attempt < 8; attempt++) {
-    const code = randomId(5, CODE_ALPHABET);
+    const code = randomId(CODE_LENGTH, CODE_ALPHABET);
     const events: RoomEvent[] = [
       { k: "create", t: now, code, settings: { ...DEFAULT_SETTINGS } },
       { k: "join", t: now, p: you.id, name, tok },
@@ -126,7 +106,7 @@ export async function createRoom(store: RoomStore, input: unknown, now: number):
 }
 
 /** A room as everyone sees it, letting go of anyone who has been silent too long. */
-export async function getRoom(store: RoomStore, rawCode: unknown, now: number): Promise<RoomView> {
+export async function getRoom(store: Store, rawCode: unknown, now: number): Promise<RoomView> {
   const code = codeFrom(rawCode);
   const { stored, room } = await load(store, code, now);
   const seen = presence(room, stored.seen);
@@ -140,7 +120,7 @@ export async function getRoom(store: RoomStore, rawCode: unknown, now: number): 
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 const whole = (value: unknown): value is number => Number.isInteger(value);
 
-export async function act(store: RoomStore, rawCode: unknown, input: unknown, now: number): Promise<RoomReply> {
+export async function act(store: Store, rawCode: unknown, input: unknown, now: number): Promise<RoomReply> {
   const code = codeFrom(rawCode);
   const body = record(input);
   const { stored, room } = await load(store, code, now);
@@ -257,7 +237,7 @@ export async function act(store: RoomStore, rawCode: unknown, input: unknown, no
  * secret goes along with it, and whoever reads the room ignores any sign of
  * life that doesn't match. The reply is just the server's clock.
  */
-export async function ping(store: RoomStore, rawCode: unknown, input: unknown, now: number): Promise<{ now: number }> {
+export async function ping(store: Store, rawCode: unknown, input: unknown, now: number): Promise<{ now: number }> {
   const code = codeFrom(rawCode);
   const { player, token } = record(input);
   if (typeof player !== "string" || !/^[a-z0-9]{1,24}$/.test(player) || typeof token !== "string" || token.length > 64) {

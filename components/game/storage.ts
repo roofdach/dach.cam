@@ -32,11 +32,13 @@ export function forget(key: string): void {
 }
 
 export const KEYS = {
-  name: "geo:name",
+  /** Your name, shared by every game with rooms. */
+  name: "games:name",
   menu: "geo:menu",
   solo: "geo:solo",
   daily: "geo:daily",
   room: (code: string) => `geo:room:${code}`,
+  drawRoom: (code: string) => `draw:room:${code}`,
 } as const;
 
 export const isString = (value: unknown): value is string => typeof value === "string";

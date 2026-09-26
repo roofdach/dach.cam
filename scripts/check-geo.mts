@@ -6,8 +6,6 @@
  */
 
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 
 import { MAP_BOUNDS, MAP_SCALES } from "../lib/geo/data/scales.ts";
 import { SEED_COUNTRIES, SEED_COUNTS } from "../lib/geo/data/seeds.ts";
@@ -16,7 +14,7 @@ import { dailyDate, dailyNumber, dailySeed, msUntilNextDaily, scoreSquare } from
 import { WORLD_SCALE_KM, destination, haversineKm, wrapLongitude } from "../lib/geo/earth.ts";
 import { LookupError, findPlaces, minimumSeparationKm, townsOnMap, type LookupBatch } from "../lib/geo/finder.ts";
 import { MAPS, MAP_BY_ID, PLAYABLE_COUNTRIES, type MapId } from "../lib/geo/maps.ts";
-import { cumulate, pickCumulative, randomId, seededRandom } from "../lib/geo/random.ts";
+import { cumulate, pickCumulative, randomId, seededRandom } from "../lib/random.ts";
 import {
   COUNTDOWN_MS,
   DEFAULT_SETTINGS,
@@ -37,9 +35,10 @@ import {
 import { MAX_POINTS, formatDistance, formatPoints, pointsFor } from "../lib/geo/score.ts";
 import { CODE_PATTERN, RoomError, act, createRoom, getRoom, ping, type Identity } from "../lib/geo/server/rooms.ts";
 import { MAX_PROBES, isProbe, lookUp } from "../lib/geo/server/lookup.ts";
-import { MemoryStore, UpstashStore, storeFromEnv, type RoomStore } from "../lib/geo/server/store.ts";
+import { MemoryStore, UpstashStore, storeFromEnv, type RoomStore } from "../lib/rooms/store.ts";
 import { embedUrl, formatCaptureDate, mapsUrl, metadataUrl, readMetadata } from "../lib/geo/streetview.ts";
 import type { Place } from "../lib/geo/types.ts";
+import { fakeUpstash } from "./fake-upstash.mts";
 
 const results: string[] = [];
 async function check(name: string, body: () => void | Promise<void>) {
@@ -140,11 +139,12 @@ await check("weighted picks follow the weights", () => {
 await check("ids are the length and alphabet asked for", () => {
   const seen = new Set<string>();
   for (let i = 0; i < 2000; i++) {
-    const code = randomId(5, "BCDFGHJKLMNPQRSTVWXZ");
+    const code = randomId(4, "BCDFGHJKLMNPQRSTVWXZ");
     assert.match(code, CODE_PATTERN);
     seen.add(code);
   }
-  assert.ok(seen.size > 1990, "codes rarely repeat");
+  // 2,000 draws from 160,000 codes repeat about a dozen times; a real room retries a taken code.
+  assert.ok(seen.size > 1960, "codes rarely repeat");
   assert.match(randomId(24), /^[a-z0-9]{24}$/);
 });
 
@@ -640,7 +640,7 @@ await check("settings, places and names are checked before anything trusts them"
 /* ----------------------------------------------------------- service */
 
 /** The API's logic against a store, with a clock the test moves by hand. */
-async function playThrough(store: RoomStore, clock: { now: number }) {
+async function playThrough(store: RoomStore<RoomEvent>, clock: { now: number }) {
   const created = await createRoom(store, { name: "host" }, clock.now);
   const code = created.room.code;
   assert.match(code, CODE_PATTERN);
@@ -709,7 +709,7 @@ async function playThrough(store: RoomStore, clock: { now: number }) {
 
 await check("the multiplayer API plays a game through, in memory", async () => {
   const clock = { now: T0 };
-  const store = new MemoryStore(() => clock.now);
+  const store = new MemoryStore<RoomEvent>(() => clock.now);
   const code = await playThrough(store, clock);
   clock.now += 7 * 60 * 60 * 1000;
   await assert.rejects(getRoom(store, code, clock.now), (e: unknown) => e instanceof RoomError && e.status === 404, "rooms expire");
@@ -717,13 +717,15 @@ await check("the multiplayer API plays a game through, in memory", async () => {
 
 await check("a write that races another is read back rather than guessed at", async () => {
   const clock = { now: T0 };
-  const inner = new MemoryStore(() => clock.now);
+  const inner = new MemoryStore<RoomEvent>(() => clock.now);
   const { room, you } = await createRoom(inner, { name: "a" }, clock.now);
   // Someone else's join lands between this request's read and its write.
-  const racing: RoomStore = {
+  const racing: RoomStore<RoomEvent> = {
     create: inner.create.bind(inner),
     read: inner.read.bind(inner),
     touch: inner.touch.bind(inner),
+    push: inner.push.bind(inner),
+    slice: inner.slice.bind(inner),
     async append(code, events, ttl, seen) {
       await inner.append(code, [{ k: "join", t: clock.now, p: "sneaky", name: "sneaky", tok: "x" }], ttl);
       return inner.append(code, events, ttl, seen);
@@ -735,107 +737,11 @@ await check("a write that races another is read back rather than guessed at", as
   assert.equal(reply.room.version, 4);
 });
 
-/**
- * A pretend Upstash: the REST protocol (POST /pipeline, a bearer token, an
- * array of {result} or {error} back) over a tiny in-memory Redis.
- */
-async function fakeUpstash(token: string) {
-  const strings = new Map<string, string>();
-  const lists = new Map<string, string[]>();
-  const hashes = new Map<string, Map<string, string>>();
-  const ttls = new Map<string, number>();
-  const commands: string[][] = [];
-  const exists = (key: string) => strings.has(key) || lists.has(key) || hashes.has(key);
-  const run = (command: string[]): unknown => {
-    const [name, key, ...args] = command;
-    switch (name.toUpperCase()) {
-      case "SET": {
-        const nx = args.some((a) => a.toUpperCase() === "NX");
-        if (nx && exists(key)) return null;
-        strings.set(key, args[0]);
-        const ex = args.findIndex((a) => a.toUpperCase() === "EX");
-        if (ex >= 0) ttls.set(key, Number(args[ex + 1]));
-        return "OK";
-      }
-      case "DEL": {
-        let n = 0;
-        for (const k of [key, ...args]) {
-          if (strings.delete(k) || lists.delete(k) || hashes.delete(k)) n++;
-        }
-        return n;
-      }
-      case "RPUSH": {
-        if (strings.has(key)) throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
-        const list = lists.get(key) ?? [];
-        list.push(...args);
-        lists.set(key, list);
-        return list.length;
-      }
-      case "LRANGE": {
-        const list = lists.get(key) ?? [];
-        const start = Number(args[0]);
-        const stop = Number(args[1]);
-        return list.slice(start, stop === -1 ? undefined : stop + 1);
-      }
-      case "HSET": {
-        const hash = hashes.get(key) ?? new Map<string, string>();
-        let added = 0;
-        for (let i = 0; i < args.length; i += 2) {
-          if (!hash.has(args[i])) added++;
-          hash.set(args[i], args[i + 1]);
-        }
-        hashes.set(key, hash);
-        return added;
-      }
-      case "HGETALL":
-        return [...(hashes.get(key) ?? new Map()).entries()].flat();
-      case "EXPIRE":
-        if (!exists(key)) return 0;
-        ttls.set(key, Number(args[0]));
-        return 1;
-      default:
-        throw new Error(`ERR unknown command '${name}'`);
-    }
-  };
-  const server = createServer((request, response) => {
-    let raw = "";
-    request.on("data", (chunk) => (raw += chunk));
-    request.on("end", () => {
-      const reply = (status: number, body: unknown) => {
-        response.writeHead(status, { "Content-Type": "application/json" });
-        response.end(JSON.stringify(body));
-      };
-      if (request.headers.authorization !== `Bearer ${token}`) return reply(401, { error: "Unauthorized" });
-      if (request.method !== "POST" || request.url !== "/pipeline") return reply(404, { error: "Not found" });
-      const batch = JSON.parse(raw) as unknown[];
-      for (const command of batch) {
-        if (!Array.isArray(command) || !command.every((part) => typeof part === "string")) {
-          return reply(400, { error: "ERR every part of a command must be a string" });
-        }
-      }
-      reply(
-        200,
-        (batch as string[][]).map((command) => {
-          commands.push(command);
-          try {
-            return { result: run(command) };
-          } catch (error) {
-            return { error: (error as Error).message };
-          }
-        }),
-      );
-    });
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  return { url, lists, hashes, ttls, commands, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
-}
-
 await check("the same game plays through Upstash's REST protocol", async () => {
   const upstash = await fakeUpstash("secret");
   try {
     const clock = { now: T0 };
-    const code = await playThrough(new UpstashStore(`${upstash.url}/`, "secret"), clock);
+    const code = await playThrough(new UpstashStore<RoomEvent>(`${upstash.url}/`, "secret", "geo"), clock);
     const log = upstash.lists.get(`geo:room:${code}:log`)!;
     assert.ok(log.length > 10 && log.every((line) => JSON.parse(line).t >= T0));
     assert.ok(upstash.hashes.get(`geo:room:${code}:seen`)!.size >= 2);
@@ -843,7 +749,7 @@ await check("the same game plays through Upstash's REST protocol", async () => {
       assert.equal(upstash.ttls.get(key), 6 * 60 * 60, `${key} expires`);
     }
     assert.ok(upstash.commands.some(([name, , value, nx]) => name === "SET" && value === "1" && nx === "NX"), "codes are claimed atomically");
-    await assert.rejects(new UpstashStore(upstash.url, "wrong").read(code), /401/);
+    await assert.rejects(new UpstashStore<RoomEvent>(upstash.url, "wrong", "geo").read(code), /401/);
   } finally {
     await upstash.close();
   }
@@ -852,7 +758,7 @@ await check("the same game plays through Upstash's REST protocol", async () => {
 await check("a room code is only handed out once, even in Redis", async () => {
   const upstash = await fakeUpstash("t");
   try {
-    const store = new UpstashStore(upstash.url, "t");
+    const store = new UpstashStore<RoomEvent>(upstash.url, "t", "geo");
     const events: RoomEvent[] = [{ k: "create", t: T0, code: "BBBBB", settings: DEFAULT_SETTINGS }];
     assert.equal(await store.create("BBBBB", events, { player: "a", at: T0, tok: "x" }, 60), true);
     assert.equal(await store.create("BBBBB", events, { player: "b", at: T0, tok: "y" }, 60), false);
@@ -864,13 +770,14 @@ await check("a room code is only handed out once, even in Redis", async () => {
 });
 
 await check("multiplayer picks its store from the environment", () => {
-  assert.ok(storeFromEnv({ KV_REST_API_URL: "https://x.upstash.io", KV_REST_API_TOKEN: "t", VERCEL: "1" }) instanceof UpstashStore);
-  assert.ok(storeFromEnv({ UPSTASH_REDIS_REST_URL: "https://x.upstash.io", UPSTASH_REDIS_REST_TOKEN: "t" }) instanceof UpstashStore);
-  assert.equal(storeFromEnv({ VERCEL: "1" }), null, "memory isn't shared between Vercel functions");
-  assert.equal(storeFromEnv({ KV_REST_API_URL: "https://x.upstash.io", VERCEL: "1" }), null, "a URL without a token is no use");
-  const local = storeFromEnv({});
+  assert.ok(storeFromEnv("geo", { KV_REST_API_URL: "https://x.upstash.io", KV_REST_API_TOKEN: "t", VERCEL: "1" }) instanceof UpstashStore);
+  assert.ok(storeFromEnv("geo", { UPSTASH_REDIS_REST_URL: "https://x.upstash.io", UPSTASH_REDIS_REST_TOKEN: "t" }) instanceof UpstashStore);
+  assert.equal(storeFromEnv("geo", { VERCEL: "1" }), null, "memory isn't shared between Vercel functions");
+  assert.equal(storeFromEnv("geo", { KV_REST_API_URL: "https://x.upstash.io", VERCEL: "1" }), null, "a URL without a token is no use");
+  const local = storeFromEnv("geo", {});
   assert.ok(local instanceof MemoryStore);
-  assert.equal(storeFromEnv({}), local, "one shared store per process");
+  assert.equal(storeFromEnv("geo", {}), local, "one shared store per process and game");
+  assert.notEqual(storeFromEnv("draw", {}), local, "games don't share rooms");
 });
 
 console.log(results.map((r) => `  ok  ${r}`).join("\n"));

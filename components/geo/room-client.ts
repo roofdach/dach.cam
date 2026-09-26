@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { RoomView } from "@/lib/geo/room";
-import { noteServerTime, serverNow } from "./clock";
-import { KEYS, forget, isString, load, save } from "./storage";
+import { noteServerTime, serverNow } from "@/components/game/clock";
+import { KEYS, forget, isString, load, save } from "@/components/game/storage";
 
 /**
  * One browser's line to a room. It polls the room every couple of seconds,

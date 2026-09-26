@@ -15,7 +15,7 @@ import { SEED_BYTES, SEED_COUNTRIES, SEED_COUNTS } from "./data/seeds.ts";
 import { MAP_SCALES } from "./data/scales.ts";
 import { destination, haversineKm } from "./earth.ts";
 import { MAP_BY_ID, inBand, type MapId } from "./maps.ts";
-import { cumulate, pickCumulative, type Random } from "./random.ts";
+import { cumulate, pickCumulative, type Random } from "../random.ts";
 import { LookupError } from "./errors.ts";
 import type { Metadata } from "./streetview.ts";
 import type { Place } from "./types.ts";

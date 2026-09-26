@@ -19,7 +19,10 @@ import { MAP_SCALES } from "./data/scales.ts";
 import { COUNTRY_NAMES } from "./countries.ts";
 import { haversineKm } from "./earth.ts";
 import { isMapId, type MapId } from "./maps.ts";
+import { cleanName } from "../rooms/codes.ts";
 import { pointsFor } from "./score.ts";
+
+export { cleanName };
 import type { Place } from "./types.ts";
 
 export const ROUND_CHOICES = [3, 5, 10] as const;
@@ -152,18 +155,6 @@ export function isPlace(value: unknown): value is Place {
   );
 }
 
-/** Tidies a display name, or returns null if nothing is left. */
-export function cleanName(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const name = value
-    .normalize("NFC")
-    .replace(/[\p{C}\p{Zl}\p{Zp}]/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  const chars = Array.from(name);
-  const short = chars.slice(0, 16).join("").trim();
-  return short.length > 0 ? short : null;
-}
 
 /* ------------------------------------------------------------ replay */
 

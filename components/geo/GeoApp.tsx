@@ -6,7 +6,7 @@ import { dailyDate } from "@/lib/geo/daily";
 import { Menu } from "./Menu";
 import { Room } from "./Room";
 import { Solo, clearSolo, isSoloGame, type SoloGame } from "./Solo";
-import { KEYS, load, save } from "./storage";
+import { KEYS, load, save } from "@/components/game/storage";
 
 /**
  * Which screen is up lives in the address: /geo is the menu, /geo?play=solo

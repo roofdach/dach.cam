@@ -1,5 +1,4 @@
-import { RoomError } from "@/lib/geo/server/rooms";
-import { failure, fresh, readBody } from "@/lib/geo/server/http";
+import { RoomError, failure, fresh, readBody } from "@/lib/rooms/http";
 import { MAX_PROBES, isProbe, lookUp } from "@/lib/geo/server/lookup";
 
 /**

@@ -8,6 +8,11 @@ export interface Game {
 
 export const games: Game[] = [
   {
+    title: "draw",
+    description: "a skribbl. one draws, everyone else guesses; join with a four-letter code.",
+    href: "/draw",
+  },
+  {
     title: "geo",
     description: "a geoguessr. solo, a daily, or a room with friends.",
     href: "/geo",

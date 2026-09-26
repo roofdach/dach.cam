@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "check": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-geo.mts",
+    "check": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-geo.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-draw.mts",
     "geo-data": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/geo-data.mts"
   },
   "dependencies": {

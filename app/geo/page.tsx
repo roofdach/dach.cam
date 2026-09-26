@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Geo } from "@/components/geo/Geo";
-import { multiplayerReady } from "@/lib/geo/server/store";
+import { multiplayerReady } from "@/lib/rooms/store";
 import { streetViewReady } from "@/lib/geo/server/lookup";
 
 const title = "geo";

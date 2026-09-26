@@ -5,12 +5,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { DAILY_MAP, DAILY_ROUNDS, DAILY_TIME, dailyDate, dailyNumber, dailySeed, msUntilNextDaily } from "@/lib/geo/daily";
 import { MAPS, MAP_BY_ID, isMapId, type MapId } from "@/lib/geo/maps";
+import { CODE_LENGTH, NOT_CODE_LETTERS } from "@/lib/rooms/codes";
 import { MAX_POINTS, formatPoints } from "@/lib/geo/score";
 import { forgetPlaces, usePlaces } from "./places";
 import { PlacesError } from "./Room";
 import { isSoloGame, newSoloGame, scoreGame, type SoloGame } from "./Solo";
-import { KEYS, isString, load, save } from "./storage";
-import { Button, Choice, Spinner, formatWait, plural } from "./ui";
+import { KEYS, isString, load, save } from "@/components/game/storage";
+import { Button, Choice, Spinner, formatWait, plural } from "@/components/game/ui";
 
 const SOLO_ROUNDS = 5;
 const TIMES: { value: number | null; label: string }[] = [
@@ -240,7 +241,6 @@ function Group({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-const CODE_LETTERS = /[^BCDFGHJKLMNPQRSTVWXZ]/g;
 
 function Friends({ multiplayer, ready }: { multiplayer: boolean; ready: boolean }) {
   const router = useRouter();
@@ -274,7 +274,7 @@ function Friends({ multiplayer, ready }: { multiplayer: boolean; ready: boolean 
 
   const join = (event: FormEvent) => {
     event.preventDefault();
-    if (code.length !== 5) return;
+    if (code.length !== CODE_LENGTH) return;
     if (name.trim()) save(KEYS.name, name.trim());
     router.push(`/geo/${code}`);
   };
@@ -309,8 +309,8 @@ function Friends({ multiplayer, ready }: { multiplayer: boolean; ready: boolean 
               <span className="text-[12.5px] text-muted">got a code?</span>
               <input
                 value={code}
-                onChange={(e) => setCode(e.target.value.toUpperCase().replace(CODE_LETTERS, "").slice(0, 5))}
-                placeholder="BCDFG"
+                onChange={(e) => setCode(e.target.value.toUpperCase().replace(NOT_CODE_LETTERS, "").slice(0, CODE_LENGTH))}
+                placeholder="BCDF"
                 inputMode="text"
                 autoCapitalize="characters"
                 autoComplete="off"
@@ -319,11 +319,11 @@ function Friends({ multiplayer, ready }: { multiplayer: boolean; ready: boolean 
                 className="min-h-10 w-[9rem] rounded-lg border border-faint bg-paper px-3 font-mono text-[16px] tracking-[0.2em] uppercase outline-none placeholder:text-faint focus:border-ink"
               />
             </label>
-            <Button type="submit" disabled={code.length !== 5} className="min-h-10">
+            <Button type="submit" disabled={code.length !== CODE_LENGTH} className="min-h-10">
               join
             </Button>
             <span id="code-hint" className="basis-full text-[12px] text-muted">
-              codes are {plural(5, "letter")}, no vowels.
+              codes are {plural(CODE_LENGTH, "letter")}, no vowels.
             </span>
           </form>
           {error && (

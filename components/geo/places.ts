@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { LookupError } from "@/lib/geo/errors";
 import type { MapId } from "@/lib/geo/maps";
-import { seededRandom, randomId } from "@/lib/geo/random";
+import { seededRandom, randomId } from "@/lib/random";
 import type { Metadata } from "@/lib/geo/streetview";
 import type { Place } from "@/lib/geo/types";
 

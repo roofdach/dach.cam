@@ -11,8 +11,8 @@ import type { LatLng, Place } from "@/lib/geo/types";
 import { Play } from "./Play";
 import { PlaceFacts, PointsBar, ResultsLayout, Verdict, useAdvanceKey } from "./Results";
 import { StreetView } from "./StreetView";
-import { KEYS, forget, save } from "./storage";
-import { Button, formatWait } from "./ui";
+import { KEYS, forget, save } from "@/components/game/storage";
+import { Button, formatWait } from "@/components/game/ui";
 import { isPlace } from "@/lib/geo/room";
 
 /** A game on your own, saved after every move so a refresh carries on where it was. */

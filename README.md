@@ -1,6 +1,6 @@
 # personal site
 
-one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a geoguessr at `/geo` and a cookie clicker at `/cookie`.
+one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a drawing game at `/draw`, a geoguessr at `/geo` and a cookie clicker at `/cookie`.
 
 ## running it
 
@@ -77,6 +77,22 @@ what it costs to run: nothing, within the free plans. an open room polls about o
 
 street view imagery is google's. maps © openstreetmap contributors and carto. towns from [geonames](https://www.geonames.org/) (cc by 4.0), borders from [natural earth](https://www.naturalearthdata.com/).
 
+## draw
+
+a skribbl, at `/draw`. someone makes a room and reads out its code; everyone else goes to `/draw`, types their name and the four letters, and they're in, no link needed. the host picks two to five rounds and 60 to 120 seconds a drawing, and can add words of their own (in with the built-in ones, where one of every three offered is theirs, or only theirs). in a round everyone draws once: the drawer picks one of three words and draws it with a pen in four sizes, a paint bucket, 24 colours, undo and clear, while everyone else types guesses in the chat. a right guess scores more the sooner it comes; the drawer scores for how many get it. a guess one letter off gets a private "close!", a message that gives the word away is only shown to whoever typed it, and a letter is uncovered at half time and another at three quarters. two to twelve players; people can join a game that's already going and still get their turn.
+
+it uses the same redis database as geo's rooms (step 2 under geo, above), and like geo it keeps rooms in memory anywhere that isn't vercel, so it works locally with nothing to set up.
+
+### how it works
+
+- **room codes** are four letters with no vowels (so no code spells anything) and none that look like numbers, for both games: 160,000 of them, each only taken while its room is open.
+- **the rules** are the same idea as geo's rooms: an append-only log of what happened (joins, starts, word choices, right guesses), replayed by a pure function, [`lib/draw/room.ts`](lib/draw/room.ts), with the server's clock deciding when a choice times out, a drawing ends and the next turn starts. the words on offer and the hints come from a secret the room keeps on the server, so nothing in anyone's browser can tell the word early: everyone gets the same view, which has the word as blanks, and the drawer, and anyone who's guessed it, ask for the word separately.
+- **chat and drawings** sit beside the log, in their own lists, so they never make the log long. the drawing is a list of small operations (a line through some points, a fill from a point, a clear, an undo of a stroke) on an 800 by 600 board, sent a few times a second as the drawer draws, and every other screen replays them onto its own board, drawn out over the next second so strokes move rather than jump. everyone asks for the drawing from a round number of operations so their requests match and the cdn can share one answer.
+
+what it costs to run: while someone's drawing, each player asks for the room and the drawing about once a second, shared through vercel's cdn, and the drawer sends a batch of strokes two or three times a second. a game of four players and three rounds is about 10,000 to 15,000 redis commands, so upstash's free 500,000 a month covers about thirty to forty games. if it runs out, the rooms stop working until the month turns over.
+
+`npm run check` covers the words and guess matching, the drawing operations and the paint bucket, the turn and scoring rules, and the api end to end in memory and against a pretend upstash.
+
 ## the link preview
 
 `/og` renders the domain the page was asked for, so sharing the site as `dach.cam` or as `dachh.cc` previews as whichever one was sent, and a new domain needs no code change. the cost is that pages render per request rather than being prerendered, because the metadata has to see the request to know which name to use. `url` in the config is only a fallback for when there is no request to read a domain from.
@@ -86,19 +102,28 @@ street view imagery is google's. maps © openstreetmap contributors and carto. t
 ```
 app/                  layout, page, global styles
 app/cookie/           the cookie clicker's page
+app/draw/             draw's menu, and /draw/CODE for rooms
 app/geo/              geo's menu, and /geo/CODE for rooms
-app/api/geo/          the multiplayer api
+app/api/draw/         draw's multiplayer api
+app/api/geo/          geo's multiplayer api
 app/og/               the link preview image
 components/           the presence sentence
 components/cookie/    the game's screen, its loop, saving and tabs
+components/draw/      draw's screens: menu, lobby, the board and its tools, chat
+components/game/      what the room games share: buttons, the server's clock, saving
 components/geo/       geo's screens: menu, rounds, results, rooms, street view, maps
 config/site.ts        everything personal
 data/games.ts         the games
 lib/cookie/           the game itself: buildings, upgrades, achievements, the engine, saves
+lib/draw/             draw: the words, guess matching, drawing operations, the room rules, and the server side
 lib/geo/              geo: maps, scoring, the place finder, the room rules, and the server side
+lib/rooms/            what rooms share: codes, where they're stored, and replies
 lib/lanyard/          client, presence logic, types, hook
 lib/origin.ts         which domain a request came in on
+lib/random.ts         seeded and secure random numbers
 scripts/check.mts     one runnable check for the logic above
 scripts/check-geo.mts the same for geo
+scripts/check-draw.mts and for draw
+scripts/fake-upstash.mts a pretend upstash for the checks
 scripts/geo-data.mts  builds geo's towns and map sizes
 ```
