@@ -18,6 +18,11 @@ export const games: Game[] = [
     href: "/phone",
   },
   {
+    title: "shape",
+    description: "a worldle. name the country from its outline: daily, speed, quiz, or race friends.",
+    href: "/shape",
+  },
+  {
     title: "geo",
     description: "a geoguessr. solo, a daily, or a room with friends.",
     href: "/geo",

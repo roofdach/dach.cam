@@ -1,6 +1,6 @@
 # personal site
 
-one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a drawing game at `/draw`, a gartic phone at `/phone`, a geoguessr at `/geo` and a cookie clicker at `/cookie`.
+one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a drawing game at `/draw`, a gartic phone at `/phone`, a worldle at `/shape`, a geoguessr at `/geo` and a cookie clicker at `/cookie`.
 
 ## running it
 
@@ -108,6 +108,24 @@ it costs much less to run than draw, since nothing is sent while people draw: a 
 
 `npm run check` covers the chains and who has which when, timing, skips and leavers, the reveal, thinning drawings, and the api end to end in memory and against a pretend upstash.
 
+## shape
+
+a worldle, at `/shape`. you get a country's outline and guess which one it is; every wrong guess says how far off you are and which way. five ways to play:
+
+- **daily**: the same country for everyone that day, six guesses, and a row of squares to share. every country comes up once before any comes round again.
+- **practice**: as many as you like, same rules.
+- **speed**: name as many outlines as you can in a minute.
+- **quiz**: five countries; for each, the outline, then its flag, its capital and which countries it borders. the wrong answers are its neighbours', so they're not give-aways.
+- **race**: a room with a four-letter code, like draw and phone. everyone gets the same outline at the same moment; your wrong guesses show you, and only you, how far off you are; the sooner you get it, the more you score.
+
+everything but the race runs in the browser with nothing sent anywhere, so it works without any setup. the race uses the same redis database as the other rooms, and a game is only a few hundred commands.
+
+### the data
+
+`npm run shape-data` builds [`lib/shape/data.ts`](lib/shape/data.ts) from natural earth's 1:50m borders (by way of `world-atlas`): each country's outline, drawn on a mercator map around its own middle so it looks the way people know it, with the islands and pieces within 500 km of the rest (france without french guiana, the us without alaska, japan with hokkaido); its capital, from geonames; and its neighbours, from which borders it shares. flags are `country-flag-icons` (mit), copied into `public/flags`, because windows can't draw flag emoji.
+
+`npm run check` covers the data, what typing a name finds (nicknames like "uk" and "holland" too), the hints, the daily, the quiz, and the race from its rules down to the api, in memory and against a pretend upstash.
+
 ## the link preview
 
 `/og` renders the domain the page was asked for, so sharing the site as `dach.cam` or as `dachh.cc` previews as whichever one was sent, and a new domain needs no code change. the cost is that pages render per request rather than being prerendered, because the metadata has to see the request to know which name to use. `url` in the config is only a fallback for when there is no request to read a domain from.
@@ -119,9 +137,11 @@ app/                  layout, page, global styles
 app/cookie/           the cookie clicker's page
 app/draw/             draw's menu, and /draw/CODE for rooms
 app/phone/            phone's menu, and /phone/CODE for rooms
+app/shape/            shape's menu and solo modes, and /shape/CODE for races
 app/geo/              geo's menu, and /geo/CODE for rooms
 app/api/draw/         draw's multiplayer api
 app/api/phone/        phone's multiplayer api
+app/api/shape/        shape's race api
 app/api/geo/          geo's multiplayer api
 app/og/               the link preview image
 components/           the presence sentence
@@ -129,12 +149,14 @@ components/cookie/    the game's screen, its loop, saving and tabs
 components/draw/      draw's screens: menu, lobby, the board and its tools, chat
 components/game/      what the room games share: buttons, the server's clock, saving, the drawing board, room screens
 components/phone/     phone's screens: lobby, writing, drawing, describing, the reveal
+components/shape/     shape's screens: daily and practice, speed, quiz, the race
 components/geo/       geo's screens: menu, rounds, results, rooms, street view, maps
 config/site.ts        everything personal
 data/games.ts         the games
 lib/cookie/           the game itself: buildings, upgrades, achievements, the engine, saves
 lib/draw/             draw: the words, guess matching, drawing operations, the room rules, and the server side
 lib/phone/            phone: the chains, the room rules, and the server side
+lib/shape/            shape: the countries, matching names, hints, the daily and quiz, the race
 lib/geo/              geo: maps, scoring, the place finder, the room rules, and the server side
 lib/rooms/            what rooms share: codes, where they're stored, and replies
 lib/lanyard/          client, presence logic, types, hook
@@ -144,6 +166,9 @@ scripts/check.mts     one runnable check for the logic above
 scripts/check-geo.mts the same for geo
 scripts/check-draw.mts and for draw
 scripts/check-phone.mts and for phone
+scripts/check-shape.mts and for shape
 scripts/fake-upstash.mts a pretend upstash for the checks
 scripts/geo-data.mts  builds geo's towns and map sizes
+scripts/shape-data.mts builds shape's countries and copies the flags
+public/flags/         every country's flag, for shape
 ```

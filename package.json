@@ -7,8 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "check": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-geo.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-draw.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-phone.mts",
-    "geo-data": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/geo-data.mts"
+    "check": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-geo.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-draw.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-phone.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-shape.mts",
+    "geo-data": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/geo-data.mts",
+    "shape-data": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/shape-data.mts"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
@@ -24,6 +25,7 @@
     "@types/react-dom": "^19",
     "@types/topojson-client": "^3.1.5",
     "all-the-cities": "^3.1.0",
+    "country-flag-icons": "^1.6.20",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "i18n-iso-countries": "^7.14.0",

@@ -21,6 +21,8 @@ export function RoomMenu({
   intro,
   how,
   createHint,
+  children,
+  footer,
 }: {
   game: GameName;
   /** Where rooms are made and looked up, like /api/draw/rooms. */
@@ -33,6 +35,10 @@ export function RoomMenu({
   intro: ReactNode;
   how: ReactNode;
   createHint: string;
+  /** More to do before the rooms, like games to play alone. */
+  children?: ReactNode;
+  /** Small print at the bottom, like where the data's from. */
+  footer?: ReactNode;
 }) {
   const router = useRouter();
   const [name, setName] = useState(() => load(KEYS.name, isString) ?? "");
@@ -121,6 +127,7 @@ export function RoomMenu({
       <main className="mt-10">
         <h1 className="text-[28px] font-semibold tracking-tight">{game.name}</h1>
         <p className="mt-2 text-muted">{intro}</p>
+        {children}
 
         {!multiplayer ? (
           <div role="alert" className="mt-8 rounded-lg border border-accent/40 bg-accent/5 p-4 text-[13.5px]">
@@ -203,6 +210,7 @@ export function RoomMenu({
           <p className="mt-2">{how}</p>
         </section>
       </main>
+      {footer && <footer className="mt-16 text-[12px] leading-relaxed text-muted">{footer}</footer>}
     </div>
   );
 }
