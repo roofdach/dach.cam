@@ -39,6 +39,9 @@ export const KEYS = {
   daily: "geo:daily",
   room: (code: string) => `geo:room:${code}`,
   drawRoom: (code: string) => `draw:room:${code}`,
+  phoneRoom: (code: string) => `phone:room:${code}`,
+  /** What you've written or drawn so far this step, in case the page reloads. */
+  phoneDraft: (code: string, game: number, step: number) => `phone:draft:${code}:${game}:${step}`,
 } as const;
 
 export const isString = (value: unknown): value is string => typeof value === "string";
