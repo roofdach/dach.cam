@@ -140,7 +140,7 @@ export function RoomMenu({
                 }}
                 maxLength={16}
                 autoComplete="nickname"
-                className="min-h-10 rounded-lg border border-faint bg-paper px-3 text-[15px] outline-none focus:border-ink"
+                className="min-h-10 rounded-lg border border-faint bg-paper px-3 text-[16px] outline-none focus:border-ink sm:text-[15px]"
               />
             </label>
 

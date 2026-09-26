@@ -221,7 +221,7 @@ function WordsEditor({
         rows={3}
         maxLength={8000}
         placeholder="our teacher, the school bus, pizza friday"
-        className="rounded-lg border border-faint bg-paper px-3 py-2 text-[14px] leading-snug outline-none placeholder:text-faint focus:border-ink disabled:opacity-60"
+        className="rounded-lg border border-faint bg-paper px-3 py-2 text-[16px] leading-snug outline-none placeholder:text-faint focus:border-ink disabled:opacity-60 sm:text-[14px]"
       />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] text-muted">
         <span>
@@ -648,6 +648,8 @@ function Chat({
     lastSent.current = Date.now();
     setText("");
     stick.current = true;
+    // Straight back to typing, keyboard still up, for the next guess.
+    input.current?.focus();
     void client.say(message);
   };
 
@@ -670,7 +672,7 @@ function Chat({
           <ChatRow key={line.key} line={line} me={me} color={colors.get(line.kind === "chat" ? line.p : "")} />
         ))}
       </div>
-      <form onSubmit={submit} className="border-t border-faint/60 p-1.5">
+      <form onSubmit={submit} className="flex items-center gap-1 border-t border-faint/60 p-1.5">
         <input
           ref={input}
           value={text}
@@ -678,10 +680,27 @@ function Chat({
           maxLength={100}
           autoComplete="off"
           spellCheck={false}
+          enterKeyHint="send"
           aria-label={guessing ? "your guess" : "chat"}
           placeholder={guessing ? "type your guess here…" : drawing ? "chat (no giving the word away)" : "chat…"}
-          className="min-h-9 w-full rounded-md bg-transparent px-2 text-[14px] outline-none placeholder:text-muted/80 focus:bg-ink/[0.04]"
+          // 16px on phones, or iPhones zoom the page in when it's tapped.
+          className="min-h-10 min-w-0 flex-1 rounded-md bg-transparent px-2 text-[16px] outline-none placeholder:text-muted/80 focus:bg-ink/[0.04] sm:min-h-9 sm:text-[14px]"
         />
+        <button
+          type="submit"
+          aria-label="send"
+          title="send"
+          disabled={!text.trim()}
+          // Tapping it mustn't take focus from the box, or a phone's keyboard closes after every guess.
+          onPointerDown={(e) => e.preventDefault()}
+          onMouseDown={(e) => e.preventDefault()}
+          className="grid size-10 shrink-0 place-items-center rounded-md text-ink transition-colors hover:bg-ink/[0.06] disabled:text-muted/50 disabled:hover:bg-transparent sm:size-9"
+        >
+          <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M22 2 11 13" />
+            <path d="M22 2 15 22l-4-9-9-4Z" />
+          </svg>
+        </button>
       </form>
     </section>
   );
