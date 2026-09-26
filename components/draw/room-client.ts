@@ -32,6 +32,8 @@ export interface Mine {
   word: string | null;
   /** The host's own words, for the host. */
   words: string[] | null;
+  /** Opens this turn's sealed chat, once you're drawing or have guessed (see lib/draw/secret.ts). */
+  key: string | null;
 }
 
 /** A chat line only you see: your message on its way, or why it didn't go to everyone. */

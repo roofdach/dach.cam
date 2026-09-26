@@ -23,6 +23,7 @@ import {
   type Settings,
 } from "../lib/draw/room.ts";
 import { act, cleanMessage, createRoom, draw, getRoom, parseInkQuery, ping, type Identity } from "../lib/draw/server/rooms.ts";
+import { turnKey, unseal } from "../lib/draw/secret.ts";
 import { cleanWord, editDistance, isClose, maskWord, mentions, normalize, sameWord } from "../lib/draw/text.ts";
 import { WORDS } from "../lib/draw/words.ts";
 import { CODE_PATTERN } from "../lib/rooms/codes.ts";
@@ -310,16 +311,24 @@ async function playThrough(store: RoomStore<DrawEvent>, clock: { now: number }, 
     await assert.rejects(ink(ann, turn.id, line), fails(409), "a turn's drawing has a limit");
   }
 
-  assert.equal((await as(ann, { type: "say", text: `it's ${word}!` })).said, "hidden", "the drawer can't give it away");
+  const drawerKey = (await as(ann, { type: "me" })).mine!.key!;
+  assert.ok(drawerKey, "the drawer holds the key to the insiders' chat");
+  assert.equal((await as(ben, { type: "me" })).mine!.key, null, "a guesser doesn't");
+  assert.equal((await as(ann, { type: "say", text: `it's ${word}!` })).said, "sent");
   assert.equal((await as(ben, { type: "say", text: "hello" })).said, "sent");
+  assert.equal((await as(ben, { type: "say", text: `is it ${word} lol` })).said, "hidden", "a guesser can't give it away either");
   const near = word.slice(0, -1) + (word.endsWith("x") ? "y" : "x");
   assert.equal((await as(ben, { type: "say", text: near })).said, "close");
   view = await getRoom(store, code, clock.now);
   assert.deepEqual(
-    view.chat.map((c) => [c.n, c.text]),
+    view.chat.filter((c) => c.g === undefined).map((c) => [c.n, c.text]),
     [["ben", "hello"]],
     "near misses and giveaways stay with whoever typed them",
   );
+  const sealed = view.chat.filter((c) => c.g !== undefined);
+  assert.deepEqual(sealed.map((c) => [c.n, c.g]), [["ann", turn.id]]);
+  assert.ok(!JSON.stringify(view).includes(word), "the drawer's line is sealed, so even the raw reply doesn't give it away");
+  assert.equal(await unseal(drawerKey, sealed[0].iv!, sealed[0].text), `it's ${word}!`);
 
   clock.now += 10_000;
   reply = await as(ben, { type: "say", text: `  ${word.toUpperCase()} ` });
@@ -362,6 +371,39 @@ async function playThrough(store: RoomStore<DrawEvent>, clock: { now: number }, 
   return { code, turn: turn.id };
 }
 
+await check("the drawer and whoever's guessed talk among themselves, sealed from everyone still guessing", async () => {
+  const clock = { now: T0 };
+  const store = new MemoryStore<DrawEvent>(() => clock.now);
+  const created = await createRoom(store, { name: "ann" }, clock.now);
+  const code = created.room.code;
+  const ann = created.you!;
+  const ben = (await act(store, code, { type: "join", name: "ben" }, clock.now)).you!;
+  const cat = (await act(store, code, { type: "join", name: "cat" }, clock.now)).you!;
+  const as = (who: Identity, body: Record<string, unknown>) => act(store, code, { ...body, player: who.id, token: who.token }, clock.now);
+  await as(ann, { type: "settings", settings: { rounds: 2, time: 60, words: ["pizza friday", "the school bus", "our teacher"], only: true } });
+  const turn = (await as(ann, { type: "start" })).room.game!.turn!;
+  const word = (await as(ann, { type: "choose", turn: turn.id, i: 0 })).mine!.word!;
+  const key = (await as(ann, { type: "me" })).mine!.key!;
+  assert.equal((await as(cat, { type: "me" })).mine!.key, null);
+  const guessed = await as(ben, { type: "say", text: word });
+  assert.equal(guessed.said, "correct");
+  assert.equal(guessed.mine!.key, key, "getting it gets you the key");
+  assert.equal((await as(ben, { type: "say", text: `ha, ${word}` })).said, "sent", "insiders can say the word to each other");
+  await as(cat, { type: "say", text: "no idea" });
+  let view = await getRoom(store, code, clock.now);
+  assert.deepEqual(view.chat.filter((c) => c.g === undefined).map((c) => c.text), ["no idea"]);
+  const sealed = view.chat.find((c) => c.g !== undefined)!;
+  assert.equal(await unseal(key, sealed.iv!, sealed.text), `ha, ${word}`);
+  assert.equal(await unseal(await turnKey("a guess at the salt", turn.id), sealed.iv!, sealed.text), null, "no other key opens it");
+  assert.notEqual(await turnKey("salt", 1), await turnKey("salt", 2), "each turn has its own");
+  // Once the drawing's over, everyone talks in the open again.
+  clock.now += 60_000;
+  assert.equal((await as(ben, { type: "say", text: "gg" })).said, "sent");
+  view = await getRoom(store, code, clock.now);
+  assert.ok(view.chat.some((c) => c.text === "gg" && c.g === undefined));
+  assert.equal((await as(ben, { type: "me" })).mine!.key, null);
+});
+
 await check("the drawing API plays a game through, in memory", async () => {
   const clock = { now: T0 };
   const store = new MemoryStore<DrawEvent>(() => clock.now);
@@ -377,7 +419,7 @@ await check("the same game plays through Upstash's REST protocol, with the chat 
     const { code, turn } = await playThrough(new UpstashStore<DrawEvent>(upstash.url, "secret", "draw"), clock);
     const inkKey = `draw:room:${code}:ink:${turn}`;
     assert.equal(upstash.lists.get(inkKey)!.length, 2);
-    assert.equal(upstash.lists.get(`draw:room:${code}:chat`)!.length, 1);
+    assert.equal(upstash.lists.get(`draw:room:${code}:chat`)!.length, 2, "ben's hello, and the drawer's sealed line");
     for (const key of [`draw:room:${code}:log`, `draw:room:${code}:chat`, inkKey]) assert.equal(upstash.ttls.get(key), 6 * 60 * 60, `${key} expires`);
     assert.equal(upstash.commands.filter(([name, key]) => name === "EXPIRE" && key === inkKey).length, 1, "a drawing's expiry is set once, not per batch");
   } finally {
