@@ -297,19 +297,35 @@ export class MemoryStore<E extends StoredEvent> implements RoomStore<E> {
 
 const globalMemory = globalThis as typeof globalThis & { __rooms?: Map<string, MemoryStore<StoredEvent>> };
 
+/** A setting as it was pasted in: spaces around it, and the quotes an .env file puts round a value, don't count. */
+function setting(value: string | undefined): string {
+  const trimmed = (value ?? "").trim();
+  return trimmed.replace(/^(["'])([\s\S]*)\1$/, "$2").trim();
+}
+
+/**
+ * Where Upstash is, if this deployment has been told. Vercel's Upstash
+ * integration names its variables KV_REST_API_*; Upstash's own docs, and
+ * the .env snippet its console hands out, say UPSTASH_REDIS_REST_*. Either
+ * works, quoted or not.
+ */
+export function upstashFromEnv(env: Record<string, string | undefined> = process.env): { url: string; token: string } | null {
+  const url = setting(env.UPSTASH_REDIS_REST_URL) || setting(env.KV_REST_API_URL);
+  const token = setting(env.UPSTASH_REDIS_REST_TOKEN) || setting(env.KV_REST_API_TOKEN);
+  return url && token ? { url, token } : null;
+}
+
 /**
  * A game's store for this deployment, or null when multiplayer can't work
  * here: on Vercel without Upstash, where memory isn't shared between
- * requests. Vercel's Upstash integration names its variables KV_REST_API_*;
- * Upstash's own docs say UPSTASH_REDIS_REST_*. Either works.
+ * requests.
  */
 export function storeFromEnv<E extends StoredEvent>(
   namespace: string,
   env: Record<string, string | undefined> = process.env,
 ): RoomStore<E> | null {
-  const url = env.UPSTASH_REDIS_REST_URL || env.KV_REST_API_URL;
-  const token = env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_TOKEN;
-  if (url && token) return new UpstashStore<E>(url, token, namespace);
+  const upstash = upstashFromEnv(env);
+  if (upstash) return new UpstashStore<E>(upstash.url, upstash.token, namespace);
   if (env.VERCEL) return null;
   const stores = (globalMemory.__rooms ??= new Map());
   if (!stores.has(namespace)) stores.set(namespace, new MemoryStore());
@@ -318,7 +334,5 @@ export function storeFromEnv<E extends StoredEvent>(
 
 /** Whether this deployment can host rooms, without creating anything. */
 export function multiplayerReady(env: Record<string, string | undefined> = process.env): boolean {
-  const url = env.UPSTASH_REDIS_REST_URL || env.KV_REST_API_URL;
-  const token = env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_TOKEN;
-  return Boolean(url && token) || !env.VERCEL;
+  return upstashFromEnv(env) !== null || !env.VERCEL;
 }

@@ -35,7 +35,7 @@ import {
 import { MAX_POINTS, formatDistance, formatPoints, pointsFor } from "../lib/geo/score.ts";
 import { CODE_PATTERN, RoomError, act, createRoom, getRoom, ping, type Identity } from "../lib/geo/server/rooms.ts";
 import { MAX_PROBES, isProbe, lookUp } from "../lib/geo/server/lookup.ts";
-import { MemoryStore, UpstashStore, storeFromEnv, type RoomStore } from "../lib/rooms/store.ts";
+import { MemoryStore, UpstashStore, multiplayerReady, storeFromEnv, upstashFromEnv, type RoomStore } from "../lib/rooms/store.ts";
 import { embedUrl, formatCaptureDate, mapsUrl, metadataUrl, readMetadata } from "../lib/geo/streetview.ts";
 import type { Place } from "../lib/geo/types.ts";
 import { fakeUpstash } from "./fake-upstash.mts";
@@ -778,6 +778,11 @@ await check("multiplayer picks its store from the environment", () => {
   assert.ok(local instanceof MemoryStore);
   assert.equal(storeFromEnv("geo", {}), local, "one shared store per process and game");
   assert.notEqual(storeFromEnv("draw", {}), local, "games don't share rooms");
+  // Pasted from Upstash's .env snippet, quotes and all.
+  assert.deepEqual(upstashFromEnv({ UPSTASH_REDIS_REST_URL: ' "https://x.upstash.io" ', UPSTASH_REDIS_REST_TOKEN: "'AX=='\n" }), { url: "https://x.upstash.io", token: "AX==" });
+  assert.deepEqual(upstashFromEnv({ KV_REST_API_URL: "https://x.upstash.io", KV_REST_API_TOKEN: "t" }), { url: "https://x.upstash.io", token: "t" });
+  assert.equal(upstashFromEnv({ KV_REST_API_URL: '""', KV_REST_API_TOKEN: "t" }), null, "a pair of quotes is no address");
+  assert.equal(multiplayerReady({ UPSTASH_REDIS_REST_URL: "  ", UPSTASH_REDIS_REST_TOKEN: "t", VERCEL: "1" }), false);
 });
 
 console.log(results.map((r) => `  ok  ${r}`).join("\n"));
