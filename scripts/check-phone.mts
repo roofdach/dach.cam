@@ -15,6 +15,7 @@ import {
   chainOf,
   cleanSettings,
   cleanText,
+  fitDrawing,
   holder,
   isDrawing,
   phaseOf,
@@ -57,6 +58,17 @@ await check("what people write and draw is checked", () => {
   assert.equal(cleanText("   "), null);
   assert.ok(isDrawing(LINE));
   assert.ok(!isDrawing([]) && !isDrawing([["l", 0, 99, 1, 1, 1]]) && !isDrawing("lines"));
+});
+
+await check("a drawing too big to send is thinned out until it fits", () => {
+  const busy: Op[] = Array.from({ length: 30 }, (_, i) => ["l", i, 12, 1, ...Array.from({ length: 2400 }, (_, j) => (j * 37 + i) % 600)] as Op);
+  assert.ok(JSON.stringify(busy).length > 200_000);
+  const fitted = fitDrawing(busy)!;
+  assert.ok(isDrawing(fitted) && JSON.stringify(fitted).length < 200_000);
+  assert.equal(fitted.length, 30, "every stroke is still there");
+  assert.deepEqual(fitted[0].slice(-2), busy[0].slice(-2), "lines keep their ends");
+  assert.deepEqual(fitDrawing(LINE), LINE, "a small drawing is left alone");
+  assert.equal(fitDrawing([["l", 0, 12, 1, 5, 5], ["u", 0]]), null, "nothing showing, nothing to hand in");
 });
 
 await check("chains pass round the table, writing then drawing then describing", () => {

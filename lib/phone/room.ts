@@ -13,7 +13,7 @@
  */
 
 import { cleanName } from "../rooms/codes.ts";
-import { isOp, type Op } from "../draw/ink.ts";
+import { compact, isOp, type Op } from "../draw/ink.ts";
 
 /** Seconds for each kind of step. */
 export const SPEEDS = {
@@ -124,6 +124,33 @@ export function isDrawing(value: unknown): value is Op[] {
     if (op[0] === "l") points += (op.length - 4) / 2;
   }
   return points <= MAX_DRAWING_POINTS;
+}
+
+const sizeOf = (ops: readonly Op[]) => JSON.stringify(ops).length + 64;
+const pointsOf = (ops: readonly Op[]) => ops.reduce((n, op) => n + (op[0] === "l" ? (op.length - 4) / 2 : 0), 0);
+
+/** Every other point of every line, keeping each line's ends. */
+function thin(ops: readonly Op[]): Op[] {
+  return ops.map((op) => {
+    if (op[0] !== "l" || op.length <= 8) return op;
+    const n = (op.length - 4) / 2;
+    const kept: number[] = [];
+    for (let i = 0; i < n; i += 2) kept.push(op[4 + 2 * i] as number, op[5 + 2 * i] as number);
+    if ((n - 1) % 2 !== 0) kept.push(op[op.length - 2] as number, op[op.length - 1] as number);
+    return ["l", op[1], op[2], op[3], ...kept] as Op;
+  });
+}
+
+/**
+ * A drawing ready to hand in: only what's showing, and if that's still too
+ * much to send, its lines thinned out until it fits, which a busy drawing
+ * barely shows. Null if there's nothing to hand in.
+ */
+export function fitDrawing(ops: readonly Op[]): Op[] | null {
+  let out = compact(ops);
+  if (out.length === 0 || out.length > MAX_DRAWING_OPS) return out.length === 0 ? null : out.slice(-MAX_DRAWING_OPS);
+  for (let i = 0; i < 8 && (sizeOf(out) > MAX_DRAWING_BYTES || pointsOf(out) > MAX_DRAWING_POINTS); i++) out = thin(out);
+  return sizeOf(out) > MAX_DRAWING_BYTES ? null : out;
 }
 
 /* ------------------------------------------------------------- chains */
