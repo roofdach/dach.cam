@@ -84,6 +84,16 @@ export function visible(ops: readonly Op[]): Op[] {
   return ops.filter((op) => op[0] !== "u" && !undone.has(op[1]));
 }
 
+/** A finished drawing at its smallest: only what's still showing, from the last clear on. */
+export function compact(ops: readonly Op[]): Op[] {
+  const shown = visible(ops);
+  let from = 0;
+  shown.forEach((op, i) => {
+    if (op[0] === "c") from = i + 1;
+  });
+  return shown.slice(from);
+}
+
 /** The stroke an undo would take back now: the latest one still showing. */
 export function lastStroke(ops: readonly Op[]): number | null {
   let latest: number | null = null;
