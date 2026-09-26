@@ -269,13 +269,16 @@ export class DrawClient {
     this.pollTimer = setTimeout(() => void this.poll(), this.failures ? Math.min(15_000, base * 2 ** this.failures) : base);
   }
 
-  /** The room, and the drawing from where this browser has got to, unless it's yours and you have it all. */
+  /**
+   * The room, and the drawing from where this browser has got to. The drawer
+   * asks too, though they have it: the same question as everyone else's gets
+   * the CDN's shared answer rather than a trip to the database.
+   */
   private url(): string {
     const base = `/api/draw/rooms/${this.code}`;
     const turn = this.snapshot.view?.game?.turn;
     if (!turn || turn.phase === "choosing") return base;
     const have = this.ink.turn === turn.id ? this.ink.batches.length : 0;
-    if (turn.drawer === this.snapshot.me && this.ink.turn === turn.id && this.ink.synced) return base;
     return `${base}?ink=${turn.id}.${have - (have % INK_BUCKET)}`;
   }
 

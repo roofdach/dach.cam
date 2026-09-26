@@ -1,6 +1,7 @@
 import { DynamicPresence } from "@/components/DynamicPresence";
 import { siteConfig } from "@/config/site";
 import { games } from "@/data/games";
+import { streetViewReady } from "@/lib/geo/server/lookup";
 
 /** Links off the site open in a new tab; `mailto:` and the like don't need one. */
 function newTab(href: string) {
@@ -8,6 +9,8 @@ function newTab(href: string) {
 }
 
 export default function Home() {
+  // Geo is only listed once its Google keys are in, rather than lead to a page saying it isn't set up.
+  const listed = games.filter((game) => game.href !== "/geo" || streetViewReady());
   return (
     <div className="mx-auto w-full max-w-[36rem] px-6 py-24 sm:py-32">
       <main>
@@ -31,7 +34,7 @@ export default function Home() {
             games
           </h2>
           <ul className="mt-4 space-y-2">
-            {games.map((game) => (
+            {listed.map((game) => (
               <li key={game.title}>
                 <a href={game.href} className="prose-link" {...newTab(game.href)}>
                   {game.title}
