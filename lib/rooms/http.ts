@@ -11,9 +11,9 @@ export class RoomError extends Error {
 /** Requests are a few hundred bytes; the biggest are a drawing's strokes and a start with ten places. */
 const MAX_BODY = 32 * 1024;
 
-export async function readBody(request: Request): Promise<unknown> {
+export async function readBody(request: Request, limit = MAX_BODY): Promise<unknown> {
   const text = await request.text();
-  if (text.length > MAX_BODY) throw new RoomError(413, "that request was too big");
+  if (text.length > limit) throw new RoomError(413, "that request was too big");
   try {
     return JSON.parse(text);
   } catch {

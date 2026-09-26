@@ -13,6 +13,11 @@ export const games: Game[] = [
     href: "/draw",
   },
   {
+    title: "phone",
+    description: "a gartic phone. write, draw what someone wrote, guess what someone drew, watch it go wrong.",
+    href: "/phone",
+  },
+  {
     title: "geo",
     description: "a geoguessr. solo, a daily, or a room with friends.",
     href: "/geo",

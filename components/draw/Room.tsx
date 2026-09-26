@@ -1,10 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { MAX_CUSTOM_WORDS, MIN_PLAYERS, ROUND_CHOICES, TIME_CHOICES, type NoteView, type PlayerView, type Settings, type TurnView } from "@/lib/draw/room";
 import { useServerNow } from "@/components/game/clock";
-import { KEYS, isString, load } from "@/components/game/storage";
+import { Connecting, Crumbs, ErrorLine, JoinForm, Leave, RoomGone, Shell, useAutoJoin, type GameName } from "@/components/game/room-ui";
 import { Button, Choice, Spinner, ordinal, plural } from "@/components/game/ui";
 import { Board } from "./Board";
 import { useDrawRoom, type DrawClient, type LocalLine, type Snapshot, type View } from "./room-client";
@@ -12,181 +11,24 @@ import { useDrawRoom, type DrawClient, type LocalLine, type Snapshot, type View 
 /** Set by the menu when you type a code with your name already in, so you go straight in. */
 export const JOIN_FLAG = "draw:join";
 
+const GAME: GameName = { name: "draw", href: "/draw" };
+
 export function Room({ code }: { code: string }) {
   const [snapshot, client] = useDrawRoom(code);
   const { status, view, me } = snapshot;
-  useAutoJoin(code, snapshot, client);
+  useAutoJoin(JOIN_FLAG, code, snapshot, client);
 
-  if (status === "unavailable") return <Notice title="multiplayer isn't set up here yet">whoever runs this site needs to connect a database; the readme says how.</Notice>;
-  if (status === "missing") return <Notice title={`there's no room called ${code}`}>check the code, or it may have closed: rooms close a few hours after the last game.</Notice>;
-  if (status === "kicked") return <Notice title="the host removed you from this room">you can make a room of your own.</Notice>;
-  if (!view) {
-    return (
-      <Shell code={code}>
-        <p className="text-muted">
-          <Spinner className="mr-2" /> connecting to room {code}…
-        </p>
-      </Shell>
-    );
-  }
+  const gone = RoomGone({ game: GAME, code, status });
+  if (gone) return gone;
+  if (!view) return <Connecting game={GAME} code={code} />;
 
   const seated = me !== null && view.players.some((p) => p.id === me && p.active);
-  if (!seated) return <JoinForm code={code} view={view} snapshot={snapshot} client={client} />;
+  if (!seated) {
+    const note = view.game && view.game.phase !== "final" ? "a game is on; you'll join in and get a turn to draw." : "";
+    return <JoinForm game={GAME} code={code} players={view.players} note={note} snapshot={snapshot} client={client} />;
+  }
   if (!view.game) return <Lobby view={view} me={me!} snapshot={snapshot} client={client} />;
   return <Game view={view} me={me!} snapshot={snapshot} client={client} />;
-}
-
-/** Coming from the menu with a name, take a seat without asking for it again. */
-function useAutoJoin(code: string, snapshot: Snapshot, client: DrawClient) {
-  const tried = useRef(false);
-  const ready = snapshot.status === "ready";
-  useEffect(() => {
-    if (tried.current || !ready) return;
-    tried.current = true;
-    let flagged = false;
-    try {
-      flagged = window.sessionStorage.getItem(JOIN_FLAG) === code;
-      window.sessionStorage.removeItem(JOIN_FLAG);
-    } catch {
-      // No session storage: you'll be asked for your name instead.
-    }
-    const name = load(KEYS.name, isString);
-    // With a seat from before, the client takes it back by itself.
-    if (flagged && name && snapshot.me === null) void client.join(name);
-  }, [ready, code, client, snapshot.me]);
-}
-
-/* -------------------------------------------------------------- frames */
-
-function Crumbs({ code, compact = false }: { code?: string; compact?: boolean }) {
-  const home = compact ? "hidden sm:inline" : "";
-  return (
-    <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-[13.5px]">
-      <Link href="/" className={`text-muted transition-colors hover:text-ink ${home}`}>
-        dach
-      </Link>
-      <span aria-hidden className={`text-faint ${home}`}>
-        /
-      </span>
-      <Link href="/draw" className="text-muted transition-colors hover:text-ink">
-        draw
-      </Link>
-      {code && (
-        <>
-          <span aria-hidden className="text-faint">
-            /
-          </span>
-          <span className="font-mono font-medium tracking-wider text-ink">{code}</span>
-        </>
-      )}
-    </nav>
-  );
-}
-
-function Shell({ code, children }: { code?: string; children: ReactNode }) {
-  return (
-    <div className="mx-auto w-full max-w-[40rem] px-6 py-10 text-[14px] sm:py-16">
-      <Crumbs code={code} />
-      <main className="mt-10">{children}</main>
-    </div>
-  );
-}
-
-function Notice({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <Shell>
-      <h1 className="text-[20px] font-semibold tracking-tight">{title}</h1>
-      <p className="mt-2 text-muted">{children}</p>
-      <p className="mt-6">
-        <Link href="/draw" className="font-medium underline decoration-faint underline-offset-4 hover:decoration-ink">
-          back to draw
-        </Link>
-      </p>
-    </Shell>
-  );
-}
-
-function ErrorLine({ snapshot, client }: { snapshot: Snapshot; client: DrawClient }) {
-  if (!snapshot.error && !snapshot.offline) return null;
-  return (
-    <p role="alert" className="mt-3 text-[13px] text-accent">
-      {snapshot.offline ? "lost touch with the room; trying again…" : snapshot.error}{" "}
-      {snapshot.error && (
-        <button type="button" onClick={() => client.clearError()} className="text-muted underline underline-offset-2 hover:text-ink">
-          ok
-        </button>
-      )}
-    </p>
-  );
-}
-
-function LeaveLink({ client, className = "" }: { client: DrawClient; className?: string }) {
-  return (
-    <Link
-      href="/draw"
-      onClick={() => void client.leave()}
-      className={`inline-flex min-h-9 items-center rounded-lg bg-ink px-3.5 text-[13.5px] font-medium text-paper hover:bg-ink/85 ${className}`}
-    >
-      leave
-    </Link>
-  );
-}
-
-/** "leave room", then "sure?", so a stray click doesn't cost you your seat. */
-function Leave({ client, label = "leave room" }: { client: DrawClient; label?: string }) {
-  const [asking, setAsking] = useState(false);
-  if (!asking) {
-    return (
-      <Button tone="quiet" onClick={() => setAsking(true)}>
-        {label}
-      </Button>
-    );
-  }
-  return (
-    <span className="flex items-center gap-2">
-      <span className="text-[13px] text-muted">leave?</span>
-      <Button onClick={() => setAsking(false)}>stay</Button>
-      <LeaveLink client={client} />
-    </span>
-  );
-}
-
-/* ---------------------------------------------------------------- join */
-
-function JoinForm({ code, view, snapshot, client }: { code: string; view: View; snapshot: Snapshot; client: DrawClient }) {
-  const [name, setName] = useState(() => load(KEYS.name, isString) ?? "");
-  const here = view.players.filter((p) => p.active);
-  const names = here.length > 5 ? `${here.slice(0, 4).map((p) => p.name).join(", ")} and ${here.length - 4} others` : here.map((p) => p.name).join(", ");
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (name.trim()) void client.join(name.trim());
-  };
-  return (
-    <Shell code={code}>
-      <h1 className="text-[20px] font-semibold tracking-tight">join room {code}</h1>
-      <p className="mt-2 text-muted">
-        {here.length === 0 ? "nobody's here yet." : `${names} ${here.length === 1 ? "is" : "are"} here.`}{" "}
-        {view.game && view.game.phase !== "final" ? "a game is on; you'll join in and get a turn to draw." : ""}
-      </p>
-      <form onSubmit={submit} className="mt-6 flex flex-wrap items-end gap-2">
-        <label className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <span className="text-[12.5px] text-muted">your name</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            maxLength={16}
-            autoFocus
-            autoComplete="nickname"
-            className="min-h-10 rounded-lg border border-faint bg-paper px-3 text-[15px] outline-none focus:border-ink"
-          />
-        </label>
-        <Button tone="solid" type="submit" disabled={!name.trim() || snapshot.busy} className="min-h-10">
-          {snapshot.busy ? <Spinner /> : "join"}
-        </Button>
-      </form>
-      <ErrorLine snapshot={snapshot} client={client} />
-    </Shell>
-  );
 }
 
 /* --------------------------------------------------------------- lobby */
@@ -244,7 +86,7 @@ function Lobby({ view, me, snapshot, client }: { view: View; me: string; snapsho
   const enough = players.length >= MIN_PLAYERS;
 
   return (
-    <Shell code={view.code}>
+    <Shell game={GAME} code={view.code}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-[12.5px] text-muted">room code</p>
@@ -327,7 +169,7 @@ function Lobby({ view, me, snapshot, client }: { view: View; me: string; snapsho
           <p className="text-muted">waiting for {hostName} to start…</p>
         )}
         <span className="flex-1" />
-        <Leave client={client} />
+        <Leave game={GAME} client={client} />
       </div>
       <ErrorLine snapshot={snapshot} client={client} />
 
@@ -428,7 +270,7 @@ function Game({ view, me, snapshot, client }: { view: View; me: string; snapshot
   return (
     <div className="flex min-h-dvh flex-col text-[14px] lg:h-dvh lg:min-h-0">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-faint/50 px-3 py-2 sm:gap-x-4 sm:px-4">
-        <Crumbs code={view.code} compact />
+        <Crumbs game={GAME} code={view.code} compact />
         <span className="text-[13px] text-muted">
           {game.phase === "final" ? "game over" : `round ${turn?.round ?? game.round} of ${game.rounds}`}
         </span>
@@ -439,7 +281,7 @@ function Game({ view, me, snapshot, client }: { view: View; me: string; snapshot
         {turn && <Timer ends={turn.ends} urgent={turn.phase === "drawing"} />}
         <div className="flex items-center gap-1">
           {host && game.phase !== "final" && <EndGame client={client} />}
-          <Leave client={client} label="leave" />
+          <Leave game={GAME} client={client} label="leave" />
         </div>
       </header>
 

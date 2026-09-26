@@ -1,6 +1,6 @@
 # personal site
 
-one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a drawing game at `/draw`, a geoguessr at `/geo` and a cookie clicker at `/cookie`.
+one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a drawing game at `/draw`, a gartic phone at `/phone`, a geoguessr at `/geo` and a cookie clicker at `/cookie`.
 
 ## running it
 
@@ -93,6 +93,20 @@ what it costs to run: while someone's drawing, each player asks for the room and
 
 `npm run check` covers the words and guess matching, the drawing operations and the paint bucket, the turn and scoring rules, and the api end to end in memory and against a pretend upstash.
 
+## phone
+
+a gartic phone, at `/phone`. everyone writes something odd; then each sentence goes round the room, drawn by the next person, described by the one after, drawn again, until every chain has been through everyone once. then the host clicks through each chain a step at a time, so everyone sees together how "a dog on a skateboard" became something else entirely. the host picks quick, normal or slow (60, 90 or 150 seconds to draw). two to twelve players, best with four or more, joining the same way as draw: a four-letter code at `/phone`. it uses the same redis database as the other rooms.
+
+### how it works
+
+- **the rules** are another replayed log, [`lib/phone/room.ts`](lib/phone/room.ts): who handed something in at which step. chains pass round the seats in order, so each meets everyone once. a step ends when everyone still here has handed in, or when its time is up.
+- **the work** (the words, or the drawing as a list of strokes) goes in a list per chain beside the log. during the game, only the person carrying a chain on is sent what came before; everyone gets a chain's work once it's being shown.
+- **nothing gets stuck.** if someone doesn't hand anything in, or leaves, their chain carries on from what it last got: whoever was meant to describe a drawing that never came draws the writing instead. what you're writing or drawing is kept in your browser as you go, so a reload loses nothing, and whatever's there goes in by itself as time runs out. a drawing too detailed to send is thinned out until it fits.
+
+it costs much less to run than draw, since nothing is sent while people draw: a game of five is roughly one to two thousand redis commands, so the free plan covers a few hundred games a month.
+
+`npm run check` covers the chains and who has which when, timing, skips and leavers, the reveal, thinning drawings, and the api end to end in memory and against a pretend upstash.
+
 ## the link preview
 
 `/og` renders the domain the page was asked for, so sharing the site as `dach.cam` or as `dachh.cc` previews as whichever one was sent, and a new domain needs no code change. the cost is that pages render per request rather than being prerendered, because the metadata has to see the request to know which name to use. `url` in the config is only a fallback for when there is no request to read a domain from.
@@ -103,19 +117,23 @@ what it costs to run: while someone's drawing, each player asks for the room and
 app/                  layout, page, global styles
 app/cookie/           the cookie clicker's page
 app/draw/             draw's menu, and /draw/CODE for rooms
+app/phone/            phone's menu, and /phone/CODE for rooms
 app/geo/              geo's menu, and /geo/CODE for rooms
 app/api/draw/         draw's multiplayer api
+app/api/phone/        phone's multiplayer api
 app/api/geo/          geo's multiplayer api
 app/og/               the link preview image
 components/           the presence sentence
 components/cookie/    the game's screen, its loop, saving and tabs
 components/draw/      draw's screens: menu, lobby, the board and its tools, chat
-components/game/      what the room games share: buttons, the server's clock, saving
+components/game/      what the room games share: buttons, the server's clock, saving, the drawing board, room screens
+components/phone/     phone's screens: lobby, writing, drawing, describing, the reveal
 components/geo/       geo's screens: menu, rounds, results, rooms, street view, maps
 config/site.ts        everything personal
 data/games.ts         the games
 lib/cookie/           the game itself: buildings, upgrades, achievements, the engine, saves
 lib/draw/             draw: the words, guess matching, drawing operations, the room rules, and the server side
+lib/phone/            phone: the chains, the room rules, and the server side
 lib/geo/              geo: maps, scoring, the place finder, the room rules, and the server side
 lib/rooms/            what rooms share: codes, where they're stored, and replies
 lib/lanyard/          client, presence logic, types, hook
@@ -124,6 +142,7 @@ lib/random.ts         seeded and secure random numbers
 scripts/check.mts     one runnable check for the logic above
 scripts/check-geo.mts the same for geo
 scripts/check-draw.mts and for draw
+scripts/check-phone.mts and for phone
 scripts/fake-upstash.mts a pretend upstash for the checks
 scripts/geo-data.mts  builds geo's towns and map sizes
 ```
