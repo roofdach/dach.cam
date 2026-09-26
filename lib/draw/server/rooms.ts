@@ -25,6 +25,7 @@ import {
   type Room,
   type RoomView,
 } from "../room.ts";
+import { seal, turnKey } from "../secret.ts";
 import { isClose, mentions, sameWord } from "../text.ts";
 
 export const ROOM_TTL_SECONDS = 6 * 60 * 60;
@@ -44,7 +45,11 @@ export interface ChatLine {
   p: string;
   /** The name at the time, in case they've gone by the time it's read. */
   n: string;
+  /** What they said, or for a sealed line, what it looks like sealed. */
   text: string;
+  /** Sealed lines: the turn whose key opens them (see lib/draw/secret.ts), and the seal's nonce. */
+  g?: number;
+  iv?: string;
 }
 
 export interface InkSlice {
@@ -61,12 +66,30 @@ export interface DrawView extends RoomView {
 /** How a message went: a correct guess, one letter off, the word given away, or just chat. */
 export type Said = "correct" | "close" | "hidden" | "sent";
 
+/** What only you may see: the words on offer and the word, your own words if you host, and the key to this turn's sealed chat. */
+export type Mine = ReturnType<typeof privateView> & { key: string | null };
+
 export interface Reply {
   room: DrawView;
   now: number;
   you?: Identity;
   said?: Said;
-  mine?: ReturnType<typeof privateView>;
+  mine?: Mine;
+}
+
+/**
+ * Whether someone is on the inside of this turn: drawing it, or has guessed
+ * it. What they say while the others are still guessing is sealed so only
+ * the others on the inside can read it.
+ */
+function insider(room: Room, player: string) {
+  const turn = room.game && !room.game.finished ? room.game.turn : null;
+  return turn?.phase === "drawing" && (turn.drawer === player || turn.guessed.has(player)) ? turn : null;
+}
+
+async function mineOf(room: Room, player: string): Promise<Mine> {
+  const turn = insider(room, player);
+  return { ...privateView(room, player), key: turn ? await turnKey(room.salt, turn.id) : null };
 }
 
 const inkList = (turn: number) => `ink:${turn}`;
@@ -76,7 +99,8 @@ function parseChat(lines: string[]): ChatLine[] {
   for (const line of lines) {
     try {
       const entry = JSON.parse(line) as ChatLine;
-      if (typeof entry.t === "number" && typeof entry.p === "string" && typeof entry.n === "string" && typeof entry.text === "string") out.push(entry);
+      const sealed = entry.g === undefined || (Number.isInteger(entry.g) && typeof entry.iv === "string");
+      if (typeof entry.t === "number" && typeof entry.p === "string" && typeof entry.n === "string" && typeof entry.text === "string" && sealed) out.push(entry);
     } catch {
       // Damage; skip it.
     }
@@ -193,13 +217,13 @@ export async function act(store: Store, rawCode: unknown, input: unknown, now: n
       if (known.kicked) throw new RoomError(403, "the host removed you from this room");
       if (!known.active && active >= MAX_PLAYERS) throw new RoomError(409, "this room is full");
       const after = await commit(store, code, stored, [{ k: "join", t: now, p: known.id, name, tok: known.tok }], now, { player: known.id, at: now, tok: known.tok });
-      return { room: after.view, now, you: { id: known.id, token }, mine: privateView(after.room, known.id) };
+      return { room: after.view, now, you: { id: known.id, token }, mine: await mineOf(after.room, known.id) };
     }
     if (active >= MAX_PLAYERS) throw new RoomError(409, "this room is full");
     const you: Identity = { id: randomId(10), token: randomId(24) };
     const tok = await hashToken(you.token);
     const after = await commit(store, code, stored, [{ k: "join", t: now, p: you.id, name, tok }], now, { player: you.id, at: now, tok });
-    return { room: after.view, now, you, mine: privateView(after.room, you.id) };
+    return { room: after.view, now, you, mine: await mineOf(after.room, you.id) };
   }
 
   const player = await identify(room, body);
@@ -212,24 +236,32 @@ export async function act(store: Store, rawCode: unknown, input: unknown, now: n
 
   if (body.type === "me") {
     const chat = await store.slice(code, "chat", -CHAT_LINES);
-    return { room: assemble(room, now, presence(room, stored.seen), chat, null), now, mine: privateView(room, player.id) };
+    return { room: assemble(room, now, presence(room, stored.seen), chat, null), now, mine: await mineOf(room, player.id) };
   }
 
   if (body.type === "say") {
     const text = cleanMessage(body.text);
     if (!text) throw new RoomError(400, "say something first");
     let said: Said = "sent";
-    if (turn?.phase === "drawing" && turn.word) {
-      const guessing = player.id !== turn.drawer && !turn.guessed.has(player.id);
-      if (guessing && sameWord(text, turn.word)) said = "correct";
-      else if (guessing && isClose(text, turn.word)) said = "close";
+    // The drawer, and anyone who's guessed it, talk among themselves until the drawing's over.
+    const inside = insider(room, player.id);
+    if (!inside && turn?.phase === "drawing" && turn.word) {
+      if (sameWord(text, turn.word)) said = "correct";
+      else if (isClose(text, turn.word)) said = "close";
       else if (mentions(text, turn.word)) said = "hidden";
     }
     if (said === "correct") {
       const after = await commit(store, code, stored, [{ k: "guess", t: now, p: player.id, turn: turn!.id }], now, me);
-      return { room: after.view, now, said, mine: privateView(after.room, player.id) };
+      return { room: after.view, now, said, mine: await mineOf(after.room, player.id) };
     }
-    if (said === "sent") await store.push(code, "chat", [JSON.stringify({ t: now, p: player.id, n: player.name, text } satisfies ChatLine)], ROOM_TTL_SECONDS);
+    if (said === "sent") {
+      let line: ChatLine = { t: now, p: player.id, n: player.name, text };
+      if (inside) {
+        const { iv, box } = await seal(await turnKey(room.salt, inside.id), text);
+        line = { ...line, text: box, g: inside.id, iv };
+      }
+      await store.push(code, "chat", [JSON.stringify(line)], ROOM_TTL_SECONDS);
+    }
     const chat = await store.slice(code, "chat", -CHAT_LINES);
     return { room: assemble(room, now, presence(room, stored.seen), chat, null), now, said };
   }
@@ -251,7 +283,7 @@ export async function act(store: Store, rawCode: unknown, input: unknown, now: n
       // Starting again from the final scores goes through the lobby, in one step.
       if (phase === "final") {
         const after = await commit(store, code, stored, [{ k: "lobby", t: now, p: player.id }, { k: "start", t: now, p: player.id }], now, me);
-        return { room: after.view, now, mine: privateView(after.room, player.id) };
+        return { room: after.view, now, mine: await mineOf(after.room, player.id) };
       }
       event = { k: "start", t: now, p: player.id };
       break;
@@ -280,7 +312,7 @@ export async function act(store: Store, rawCode: unknown, input: unknown, now: n
   }
 
   const after = await commit(store, code, stored, [event], now, me);
-  return { room: after.view, now, mine: privateView(after.room, player.id) };
+  return { room: after.view, now, mine: await mineOf(after.room, player.id) };
 }
 
 /**

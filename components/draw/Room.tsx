@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { MAX_CUSTOM_WORDS, MIN_PLAYERS, ROUND_CHOICES, TIME_CHOICES, type NoteView, type PlayerView, type Settings, type TurnView } from "@/lib/draw/room";
+import { unseal } from "@/lib/draw/secret";
 import { useServerNow } from "@/components/game/clock";
 import { Connecting, Crumbs, ErrorLine, JoinForm, Leave, RoomGone, Shell, useAutoJoin, type GameName } from "@/components/game/room-ui";
 import { Button, Choice, Spinner, ordinal, plural } from "@/components/game/ui";
@@ -265,6 +266,7 @@ function Game({ view, me, snapshot, client }: { view: View; me: string; snapshot
   const word = known?.word ?? null;
   const drawing = myTurn && turn?.phase === "drawing" && word !== null;
   const guessing = !!turn && turn.phase === "drawing" && !myTurn && !turn.guessed.includes(me);
+  const inside = !!turn && turn.phase === "drawing" && !guessing;
   const drawerName = view.players.find((p) => p.id === turn?.drawer)?.name ?? "someone";
 
   return (
@@ -292,7 +294,7 @@ function Game({ view, me, snapshot, client }: { view: View; me: string; snapshot
           </Board>
           <ErrorLine snapshot={snapshot} client={client} />
         </div>
-        <Chat view={view} me={me} snapshot={snapshot} client={client} guessing={guessing} drawing={drawing} className="h-72 lg:order-3 lg:h-auto" />
+        <Chat view={view} me={me} snapshot={snapshot} client={client} guessing={guessing} inside={inside} className="h-72 lg:order-3 lg:h-auto" />
         <Players view={view} me={me} host={host} client={client} className="lg:order-1" />
       </div>
     </div>
@@ -574,7 +576,8 @@ function Players({ view, me, host, client, className = "" }: { view: View; me: s
 /* ---------------------------------------------------------------- chat */
 
 type Line =
-  | { key: string; t: number; kind: "chat"; p: string; n: string; text: string }
+  /** `inside`: said by the drawer or someone who'd guessed, for their eyes only. */
+  | { key: string; t: number; kind: "chat"; p: string; n: string; text: string; inside?: boolean }
   | { key: string; t: number; kind: "note"; note: NoteView }
   | { key: string; t: number; kind: "local"; line: LocalLine };
 
@@ -587,7 +590,7 @@ function Chat({
   snapshot,
   client,
   guessing,
-  drawing,
+  inside,
   className = "",
 }: {
   view: View;
@@ -595,7 +598,8 @@ function Chat({
   snapshot: Snapshot;
   client: DrawClient;
   guessing: boolean;
-  drawing: boolean;
+  /** You're drawing, or you've guessed it: what you say now only reaches the others who have. */
+  inside: boolean;
   className?: string;
 }) {
   const list = useRef<HTMLDivElement>(null);
@@ -603,6 +607,27 @@ function Chat({
   const stick = useRef(true);
   const lastSent = useRef(0);
   const [text, setText] = useState("");
+
+  // Lines only the drawer and those who've guessed may read, opened with this turn's key once you have it.
+  const key = snapshot.mine?.key ?? null;
+  const keyTurn = snapshot.mine?.turn ?? null;
+  const [opened, setOpened] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const pending = key ? view.chat.filter((c) => c.g === keyTurn && c.iv && !(sealedId(c) in opened)) : [];
+    if (!key || pending.length === 0) return;
+    let live = true;
+    void Promise.all(pending.map(async (c) => [sealedId(c), await unseal(key, c.iv!, c.text)] as const)).then((pairs) => {
+      if (!live) return;
+      setOpened((current) => {
+        const next = { ...current };
+        for (const [id, plain] of pairs) if (plain !== null) next[id] = plain;
+        return next;
+      });
+    });
+    return () => {
+      live = false;
+    };
+  }, [view.chat, key, keyTurn, opened]);
 
   const lines = useMemo(() => {
     const out: Line[] = [];
@@ -612,7 +637,10 @@ function Chat({
       counts.set(base, n);
       return `${base}#${n}`;
     };
-    for (const c of view.chat) out.push({ key: key(`c:${c.t}:${c.p}:${c.text}`), t: c.t, kind: "chat", p: c.p, n: c.n, text: c.text });
+    for (const c of view.chat) {
+      if (c.g === undefined) out.push({ key: key(`c:${c.t}:${c.p}:${c.text}`), t: c.t, kind: "chat", p: c.p, n: c.n, text: c.text });
+      else if (sealedId(c) in opened) out.push({ key: `s:${sealedId(c)}`, t: c.t, kind: "chat", p: c.p, n: c.n, text: opened[sealedId(c)], inside: true });
+    }
     for (const note of view.notes) {
       const detail = "p" in note ? note.p : "word" in note ? note.word : "round" in note ? note.round : "";
       out.push({ key: key(`n:${note.t}:${note.kind}:${detail}`), t: note.t, kind: "note", note });
@@ -621,7 +649,7 @@ function Chat({
     // Stable, so lines from the same moment keep the order they came in.
     out.sort((a, b) => a.t - b.t);
     return out.slice(-SHOWN_LINES);
-  }, [view.chat, view.notes, snapshot.local]);
+  }, [view.chat, view.notes, snapshot.local, opened]);
 
   // Stay at the bottom as lines come in, unless you've scrolled up to read.
   useEffect(() => {
@@ -644,13 +672,16 @@ function Chat({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const message = text.trim();
-    if (!message || Date.now() - lastSent.current < SEND_GAP_MS) return;
-    lastSent.current = Date.now();
+    if (!message) return;
     setText("");
     stick.current = true;
     // Straight back to typing, keyboard still up, for the next guess.
     input.current?.focus();
-    void client.say(message);
+    // Messages go at most one per SEND_GAP_MS; one typed faster waits its turn rather than being lost.
+    const wait = Math.max(0, lastSent.current + SEND_GAP_MS - Date.now());
+    lastSent.current = Date.now() + wait;
+    if (wait > 0) setTimeout(() => void client.say(message), wait);
+    else void client.say(message);
   };
 
   const colors = useMemo(() => new Map(view.players.map((p) => [p.id, p.color])), [view.players]);
@@ -682,7 +713,7 @@ function Chat({
           spellCheck={false}
           enterKeyHint="send"
           aria-label={guessing ? "your guess" : "chat"}
-          placeholder={guessing ? "type your guess here…" : drawing ? "chat (no giving the word away)" : "chat…"}
+          placeholder={guessing ? "type your guess here…" : inside ? "only people who've got it see this" : "chat…"}
           // 16px on phones, or iPhones zoom the page in when it's tapped.
           className="min-h-10 min-w-0 flex-1 rounded-md bg-transparent px-2 text-[16px] outline-none placeholder:text-muted/80 focus:bg-ink/[0.04] sm:min-h-9 sm:text-[14px]"
         />
@@ -706,10 +737,15 @@ function Chat({
   );
 }
 
+const sealedId = (c: { t: number; p: string; iv?: string }) => `${c.t}:${c.p}:${c.iv}`;
+
 function ChatRow({ line, me, color }: { line: Line; me: string; color?: string }) {
   if (line.kind === "chat") {
     return (
-      <p className="break-words py-0.5">
+      <p
+        className={`break-words py-0.5 ${line.inside ? "-mx-1 rounded bg-[#d3f9d8]/60 px-1 text-[#2b8a3e] dark:bg-[#1f3d25]/60 dark:text-[#8ce99a]" : ""}`}
+        title={line.inside ? "only people who've got it can see this" : undefined}
+      >
         <span className="font-semibold" style={{ color }}>
           {line.p === me ? "you" : line.n}
         </span>
