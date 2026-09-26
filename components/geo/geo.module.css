@@ -1,0 +1,147 @@
+/* Leaflet draws its own markup; these reach into it. */
+
+.map {
+  background: #d4dadc;
+  font: inherit;
+  cursor: crosshair;
+}
+
+.map :global(.leaflet-control-attribution) {
+  font-size: 9.5px;
+  line-height: 1.4;
+  background: rgb(255 255 255 / 0.75);
+  color: #444;
+}
+
+.map :global(.leaflet-control-attribution a) {
+  color: inherit;
+}
+
+.map :global(.leaflet-control-zoom) {
+  border: 0;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.25);
+}
+
+.map :global(.leaflet-control-zoom a) {
+  width: 28px;
+  height: 28px;
+  line-height: 26px;
+  font-size: 17px;
+  color: #1b1a17;
+}
+
+.map :global(.leaflet-interactive) {
+  cursor: crosshair;
+}
+
+/* The pin you place. */
+.pin {
+  position: relative;
+}
+
+.pin span {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 22px;
+  height: 22px;
+  margin-left: -11px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  transform-origin: 50% 50%;
+  background: var(--pin, #b7502f);
+  border: 2px solid #fff;
+  box-shadow: 0 2px 5px rgb(0 0 0 / 0.35);
+}
+
+.pin span::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+/* Where the round really was. */
+.answer {
+  display: grid;
+  place-items: center;
+}
+
+.answer span {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #1b1a17;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 2px #1b1a17, 0 2px 6px rgb(0 0 0 / 0.4);
+}
+
+.answer b {
+  position: absolute;
+  top: -22px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #1b1a17;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+/* Someone's guess: a disc in their colour with their initial. */
+.guess {
+  display: grid;
+  place-items: center;
+}
+
+.guess span {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--pin, #b7502f);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.guess.mine span {
+  min-width: 28px;
+  height: 28px;
+  box-shadow: 0 0 0 3px rgb(0 0 0 / 0.2), 0 1px 4px rgb(0 0 0 / 0.4);
+}
+
+/* Google's frame, with the strip along the top (where it prints the address) cut off. */
+.street {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  top: calc(-1 * var(--crop));
+  height: calc(100% + var(--crop));
+  border: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid rgb(255 255 255 / 0.25);
+  border-top-color: #fff;
+  animation: spin 800ms linear infinite;
+}
