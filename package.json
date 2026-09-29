@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "check": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-geo.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-draw.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-phone.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-shape.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-hang.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-sus.mts",
+    "check": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-geo.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-draw.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-phone.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-shape.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-hang.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-sus.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-arcade.mts",
     "geo-data": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/geo-data.mts",
     "shape-data": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/shape-data.mts"
   },

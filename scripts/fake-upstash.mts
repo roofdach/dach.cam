@@ -11,9 +11,12 @@ export async function fakeUpstash(token: string) {
   const strings = new Map<string, string>();
   const lists = new Map<string, string[]>();
   const hashes = new Map<string, Map<string, string>>();
+  const zsets = new Map<string, Map<string, number>>();
   const ttls = new Map<string, number>();
   const commands: string[][] = [];
-  const exists = (key: string) => strings.has(key) || lists.has(key) || hashes.has(key);
+  const exists = (key: string) => strings.has(key) || lists.has(key) || hashes.has(key) || zsets.has(key);
+  /** A sorted set best first, as ZREVRANGE has it: by score, then by member backwards. */
+  const ranked = (key: string) => [...(zsets.get(key) ?? new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0));
   const run = (command: string[]): unknown => {
     const [name, key, ...args] = command;
     switch (name.toUpperCase()) {
@@ -28,7 +31,7 @@ export async function fakeUpstash(token: string) {
       case "DEL": {
         let n = 0;
         for (const k of [key, ...args]) {
-          if (strings.delete(k) || lists.delete(k) || hashes.delete(k)) n++;
+          if (strings.delete(k) || lists.delete(k) || hashes.delete(k) || zsets.delete(k)) n++;
         }
         return n;
       }
@@ -59,6 +62,51 @@ export async function fakeUpstash(token: string) {
         }
         hashes.set(key, hash);
         return added;
+      }
+      case "HMGET": {
+        const hash = hashes.get(key);
+        return args.map((field) => hash?.get(field) ?? null);
+      }
+      case "ZADD": {
+        const gt = args[0]?.toUpperCase() === "GT";
+        const rest = gt ? args.slice(1) : args;
+        const set = zsets.get(key) ?? new Map<string, number>();
+        let added = 0;
+        for (let i = 0; i + 1 < rest.length; i += 2) {
+          const score = Number(rest[i]);
+          const member = rest[i + 1];
+          if (!set.has(member)) added++;
+          if (!set.has(member) || !gt || score > set.get(member)!) set.set(member, score);
+        }
+        zsets.set(key, set);
+        return added;
+      }
+      case "ZSCORE": {
+        const score = zsets.get(key)?.get(args[0]);
+        return score === undefined ? null : String(score);
+      }
+      case "ZREVRANK": {
+        const i = ranked(key).findIndex(([member]) => member === args[0]);
+        return i < 0 ? null : i;
+      }
+      case "ZREVRANGE": {
+        const list = ranked(key);
+        const stop = Number(args[1]);
+        const slice = list.slice(Number(args[0]), stop < 0 ? list.length + stop + 1 : stop + 1);
+        return args[2]?.toUpperCase() === "WITHSCORES" ? slice.flatMap(([m, score]) => [m, String(score)]) : slice.map(([m]) => m);
+      }
+      case "ZREMRANGEBYRANK": {
+        // Ranks count from the lowest score up.
+        const list = ranked(key).reverse();
+        const n = list.length;
+        const start = Number(args[0]) < 0 ? n + Number(args[0]) : Number(args[0]);
+        const stop = Number(args[1]) < 0 ? n + Number(args[1]) : Number(args[1]);
+        let removed = 0;
+        for (let i = Math.max(0, start); i <= Math.min(n - 1, stop); i++) {
+          zsets.get(key)!.delete(list[i][0]);
+          removed++;
+        }
+        return removed;
       }
       case "HGETALL":
         return [...(hashes.get(key) ?? new Map()).entries()].flat();
@@ -101,5 +149,5 @@ export async function fakeUpstash(token: string) {
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  return { url, lists, hashes, ttls, commands, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+  return { url, lists, hashes, zsets, ttls, commands, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
 }

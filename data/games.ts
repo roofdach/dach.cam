@@ -28,6 +28,16 @@ export const games: Game[] = [
     href: "/hang",
   },
   {
+    title: "flap",
+    description: "a flappy bird. high scores, and races against a friend on the same pipes.",
+    href: "/flap",
+  },
+  {
+    title: "snake",
+    description: "a snake. high scores, and races against a friend on the same board.",
+    href: "/snake",
+  },
+  {
     title: "shape",
     description: "a worldle. name the country from its outline: daily, speed, quiz, or race friends.",
     href: "/shape",

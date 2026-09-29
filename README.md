@@ -1,6 +1,6 @@
 # personal site
 
-one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a drawing game at `/draw`, a gartic phone at `/phone`, an among us at `/sus`, a hangman at `/hang`, a worldle at `/shape`, a geoguessr at `/geo` and a cookie clicker at `/cookie`.
+one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a drawing game at `/draw`, a gartic phone at `/phone`, an among us at `/sus`, a hangman at `/hang`, a flappy bird at `/flap`, a snake at `/snake`, a worldle at `/shape`, a geoguessr at `/geo` and a cookie clicker at `/cookie`.
 
 ## running it
 
@@ -149,6 +149,23 @@ the host also picks 30, 60 or 90 seconds a word, and can add words of their own,
 
 `npm run check` covers the words, what counts as a letter and a guess, the scoring, a race and taking turns from the rules down to the api, in memory and against a pretend upstash.
 
+## flap and snake
+
+a flappy bird at `/flap` and a snake at `/snake`, the arcade games. both start the moment the page loads: tap, click or press space to flap; arrow keys, WASD, a swipe or the pad on a phone to steer the snake, which gets longer and quicker with every apple, and every fifth apple brings a golden one worth three for a little while. each has high scores for today and all time, and your best is kept on your device whether or not the boards can be reached.
+
+you can also race a friend (or up to eight): make a room, send the code, and everyone plays the same pipes or the same board at the same moment. in flap the others fly beside you as see-through birds; in snake their boards are small beside yours. the best score takes the round, the longer run if it's level, and the host picks first to one, three or five rounds for the match.
+
+### how it works
+
+- **every run can be played again.** both games move in fixed steps (sixty ticks a second for the bird, a step per move for the snake, quicker as it grows), from a seed, with nothing in the sums a browser could round differently ([`lib/flap/game.ts`](lib/flap/game.ts), [`lib/snake/game.ts`](lib/snake/game.ts)). so a run is just its seed and its moves: which ticks you flapped on, which steps you turned before.
+- **the high scores believe nothing they're told.** before a run your browser asks for a ticket: a seed, when it was handed out, and a signature over both, so nobody can pick an easy course or claim to have started earlier. after, it sends the ticket and the moves; the server plays the run back, and only what it really comes to goes on the board, and only if it could have been played in the time since the ticket ([`lib/arcade/server/scores.ts`](lib/arcade/server/scores.ts)). tickets are signed with `ARCADE_SECRET` if you set one, and otherwise with the database's token, which only the server has. you're a random secret your browser keeps, and the boards only ever see a hash of it, so nobody can post as you. a bot that really plays well could still get on; there's no stopping that.
+- **the boards** are sorted sets in the same redis as the rooms, one line per player keeping their best: all time (the top 2,000 are kept), and today by greenwich time, which lets itself go after a few days ([`lib/arcade/scores.ts`](lib/arcade/scores.ts)).
+- **a race** is another replayed log ([`lib/arcade/room.ts`](lib/arcade/room.ts)). each round's seed comes from the room's secret salt, and everyone starts at the same moment by the server's clock. when you're out, your moves go to the server, which plays them back, checks they fit in the time the round's been going, and keeps the score. while you play, where you've got to goes out a few times a second, signed with your seat's key the same way sus's positions are, so it needn't read the room ([`lib/rooms/seats.ts`](lib/rooms/seats.ts)).
+
+what it costs to run: a solo run is three requests (a ticket, the run, and the boards, which the cdn shares for ten seconds) and about fifteen redis commands, so upstash's free 500,000 a month covers tens of thousands of runs. a race is more, since where everyone's got to goes several times a second: roughly 1,500 to 2,000 commands for a one-minute round between two.
+
+`npm run check` covers the courses and boards, that both games play back to the letter and can be played well (by a simple bot), what a run's moves come to and how quickly they could have been played, the boards in memory and against a pretend upstash, what the boards turn away, and a race from its rules down to the api.
+
 ## shape
 
 a worldle, at `/shape`. you get a country's outline and guess which one it is; every wrong guess says how far off you are and which way. five ways to play:
@@ -180,12 +197,16 @@ app/draw/             draw's menu, and /draw/CODE for rooms
 app/phone/            phone's menu, and /phone/CODE for rooms
 app/sus/              sus's menu, and /sus/CODE for rooms
 app/hang/             hang's menu, and /hang/CODE for rooms
+app/flap/             flap's menu, which is also the game, and /flap/CODE for races
+app/snake/            snake's the same
 app/shape/            shape's menu and solo modes, and /shape/CODE for races
 app/geo/              geo's menu, and /geo/CODE for rooms
 app/api/draw/         draw's multiplayer api
 app/api/phone/        phone's multiplayer api
 app/api/sus/          sus's multiplayer api
 app/api/hang/         hang's multiplayer api
+app/api/flap/         flap's high scores and races
+app/api/snake/        snake's high scores and races
 app/api/shape/        shape's race api
 app/api/geo/          geo's multiplayer api
 app/og/               the link preview image
@@ -196,6 +217,9 @@ components/game/      what the room games share: buttons, the server's clock, sa
 components/phone/     phone's screens: lobby, writing, drawing, describing, the reveal
 components/sus/       sus's screens (lobby, roles, the ship on a canvas, the tasks, meetings, ejections, the end) and the walking
 components/hang/      hang's screens: lobby, the gallows, the keyboard, watching, the reveal, the awards
+components/arcade/    what flap and snake share: the high scores, playing alone, the race screens
+components/flap/      flap's canvas, drawing, the race
+components/snake/     snake's canvas, drawing, the race
 components/shape/     shape's screens: daily and practice, speed, quiz, the race
 components/geo/       geo's screens: menu, rounds, results, rooms, street view, maps
 config/site.ts        everything personal
@@ -205,9 +229,12 @@ lib/draw/             draw: the words, guess matching, drawing operations, the r
 lib/phone/            phone: the chains, the room rules, and the server side
 lib/sus/              sus: the ship, walking and seeing, the room rules, and the server side
 lib/hang/             hang: the words, the room rules, and the server side
+lib/flap/             the flappy bird, as sums
+lib/snake/            the snake, as sums
+lib/arcade/           playing runs back, the high scores, the race rules, and the server side
 lib/shape/            shape: the countries, matching names, hints, the daily and quiz, the race
 lib/geo/              geo: maps, scoring, the place finder, the room rules, and the server side
-lib/rooms/            what rooms share: codes, where they're stored, and replies
+lib/rooms/            what rooms share: codes, where they're stored, seat keys, and replies
 lib/lanyard/          client, presence logic, types, hook
 lib/origin.ts         which domain a request came in on
 lib/random.ts         seeded and secure random numbers
@@ -218,6 +245,7 @@ scripts/check-phone.mts and for phone
 scripts/check-shape.mts and for shape
 scripts/check-hang.mts and for hang
 scripts/check-sus.mts and for sus
+scripts/check-arcade.mts and for flap and snake
 scripts/fake-upstash.mts a pretend upstash for the checks
 scripts/geo-data.mts  builds geo's towns and map sizes
 scripts/shape-data.mts builds shape's countries and copies the flags

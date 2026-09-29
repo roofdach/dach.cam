@@ -96,7 +96,7 @@ function unpackSeen(value: unknown): { at: number; tok: string } | null {
 const strings = (raw: unknown): string[] => (Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : []);
 
 /** HGETALL's flat [field, value, field, value…] as an object. */
-function pairs(raw: unknown): Record<string, string> {
+export function pairs(raw: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (!Array.isArray(raw)) return out;
   for (let i = 0; i + 1 < raw.length; i += 2) if (typeof raw[i] === "string" && typeof raw[i + 1] === "string") out[raw[i]] = raw[i + 1];
@@ -105,7 +105,32 @@ function pairs(raw: unknown): Record<string, string> {
 
 /* ------------------------------------------------------------- upstash */
 
-type Command = (string | number)[];
+export type Command = (string | number)[];
+
+/** Runs commands against Upstash in one round trip, in order. Not a transaction: each is atomic on its own. */
+export async function upstashPipeline(url: string, token: string, commands: Command[], fetcher: typeof fetch = fetch): Promise<unknown[]> {
+  const response = await fetcher(`${url.replace(/\/+$/, "")}/pipeline`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(commands.map((command) => command.map(String))),
+    cache: "no-store",
+  });
+  const text = await response.text();
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new Error(`Upstash replied ${response.status} with something that isn't JSON`);
+  }
+  if (!response.ok || !Array.isArray(body)) {
+    const message = (body as { error?: unknown } | null)?.error;
+    throw new Error(`Upstash replied ${response.status}: ${typeof message === "string" ? message : "unexpected reply"}`);
+  }
+  return body.map((entry: { result?: unknown; error?: unknown }) => {
+    if (entry && typeof entry.error === "string") throw new Error(`Upstash: ${entry.error}`);
+    return entry?.result ?? null;
+  });
+}
 
 export class UpstashStore<E extends StoredEvent> implements RoomStore<E> {
   private readonly url: string;
@@ -120,29 +145,8 @@ export class UpstashStore<E extends StoredEvent> implements RoomStore<E> {
     this.fetcher = fetcher;
   }
 
-  /** Runs commands in one round trip, in order. Not a transaction: each is atomic on its own. */
-  private async pipeline(commands: Command[]): Promise<unknown[]> {
-    const response = await this.fetcher(`${this.url}/pipeline`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(commands.map((command) => command.map(String))),
-      cache: "no-store",
-    });
-    const text = await response.text();
-    let body: unknown;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      throw new Error(`Upstash replied ${response.status} with something that isn't JSON`);
-    }
-    if (!response.ok || !Array.isArray(body)) {
-      const message = (body as { error?: unknown } | null)?.error;
-      throw new Error(`Upstash replied ${response.status}: ${typeof message === "string" ? message : "unexpected reply"}`);
-    }
-    return body.map((entry: { result?: unknown; error?: unknown }) => {
-      if (entry && typeof entry.error === "string") throw new Error(`Upstash: ${entry.error}`);
-      return entry?.result ?? null;
-    });
+  private pipeline(commands: Command[]): Promise<unknown[]> {
+    return upstashPipeline(this.url, this.token, commands, this.fetcher);
   }
 
   async create(code: string, events: E[], seen: Seen, ttl: number) {

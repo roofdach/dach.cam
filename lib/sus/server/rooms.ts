@@ -26,6 +26,7 @@ import { randomId } from "../../random.ts";
 import { seal } from "../../draw/secret.ts";
 import { CODE_ALPHABET, CODE_LENGTH, cleanName, codeFrom, hashToken } from "../../rooms/codes.ts";
 import { RoomError, record } from "../../rooms/http.ts";
+import { digest, isPlayerId, seatKey, verify } from "../../rooms/seats.ts";
 import type { ListRead, RoomStore, Seen, StoredRoom } from "../../rooms/store.ts";
 import {
   DEFAULT_SETTINGS,
@@ -120,24 +121,11 @@ export interface Reply {
   mine?: Mine | null;
 }
 
-const encoder = new TextEncoder();
-const base64 = (data: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(data)));
-const fromBase64 = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
-const digest = async (text: string) => base64(await crypto.subtle.digest("SHA-256", encoder.encode(text)));
+// The checks sign as the browser does.
+export { seatKey, sign } from "../../rooms/seats.ts";
 
-/** The key a player's own view is sealed with, from the room's secret salt. */
-export const seatKey = (salt: string, player: string) => digest(`${salt}:seat:${player}`);
 /** The key the dead talk to each other with, this game. */
 export const ghostKey = (salt: string, game: number) => digest(`${salt}:ghosts:${game}`);
-
-/** What a signed request is signed over: its kind, who's sending it, and what it says. */
-export const signedText = (type: string, player: string, data: string) => `${type}\n${player}\n${data}`;
-
-/** Signs a request with a player's key; the browser does the same (see components/sus/room-client.ts). */
-export async function sign(key: string, type: string, player: string, data: string): Promise<string> {
-  const hmac = await crypto.subtle.importKey("raw", fromBase64(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return base64(await crypto.subtle.sign("HMAC", hmac, encoder.encode(signedText(type, player, data))));
-}
 
 async function mineOf(room: Room, player: string): Promise<Mine | null> {
   const me = privateView(room, player);
@@ -427,40 +415,6 @@ export async function act(store: Store, rawCode: unknown, input: unknown, now: n
 /* ---------------------------------------------------------- positions */
 
 /**
- * Rooms' salts, which never change, remembered by this server instance so a
- * signed position usually costs nothing to check. A code can be reused once
- * its room has gone, so a signature that doesn't check out asks again.
- */
-const salts = new Map<string, string>();
-
-async function saltFor(store: Store, code: string, fresh = false): Promise<string> {
-  const cached = salts.get(code);
-  if (cached && !fresh) return cached;
-  const head = await store.head(code);
-  if (!head || head.k !== "create") throw new RoomError(404, "there's no room with that code, or it has expired");
-  salts.set(code, head.salt);
-  if (salts.size > 1000) salts.delete(salts.keys().next().value!);
-  return head.salt;
-}
-
-async function verify(store: Store, code: string, type: string, player: string, data: string, mac: string): Promise<void> {
-  for (const fresh of [false, true]) {
-    const key = await seatKey(await saltFor(store, code, fresh), player);
-    const hmac = await crypto.subtle.importKey("raw", fromBase64(key), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
-    let signature: ReturnType<typeof fromBase64>;
-    try {
-      signature = fromBase64(mac);
-    } catch {
-      break;
-    }
-    if (await crypto.subtle.verify("HMAC", hmac, signature, encoder.encode(signedText(type, player, data)))) return;
-  }
-  throw new RoomError(401, "that request wasn't signed right");
-}
-
-const isId = (value: unknown): value is string => typeof value === "string" && /^[a-z0-9]{1,24}$/.test(value);
-
-/**
  * Where you are, signed, and where everyone else is: several times a second
  * while a game's on. The answer leaves you out, and anyone who's gone quiet,
  * and says what version the room was at when something last happened that
@@ -469,8 +423,8 @@ const isId = (value: unknown): value is string => typeof value === "string" && /
 export async function pos(store: Store, rawCode: unknown, input: unknown, now: number): Promise<{ now: number; pos: Record<string, Position>; version: number }> {
   const code = codeFrom(rawCode);
   const { player, data, mac } = record(input);
-  if (!isId(player) || typeof data !== "string" || data.length > 200 || typeof mac !== "string" || mac.length > 100) throw new RoomError(400, "that request made no sense");
-  await verify(store, code, "pos", player, data, mac);
+  if (!isPlayerId(player) || typeof data !== "string" || data.length > 200 || typeof mac !== "string" || mac.length > 100) throw new RoomError(400, "that request made no sense");
+  await verify(store, "sus", code, "pos", player, data, mac);
   let payload: Record<string, unknown>;
   try {
     payload = record(JSON.parse(data));
@@ -490,7 +444,7 @@ export async function pos(store: Store, rawCode: unknown, input: unknown, now: n
 export async function ping(store: Store, rawCode: unknown, input: unknown, now: number): Promise<{ now: number }> {
   const code = codeFrom(rawCode);
   const { player, token } = record(input);
-  if (typeof player !== "string" || !/^[a-z0-9]{1,24}$/.test(player) || typeof token !== "string" || token.length > 64) {
+  if (!isPlayerId(player) || typeof token !== "string" || token.length > 64) {
     throw new RoomError(401, "you're not in this room");
   }
   await store.touch(code, { player, at: now, tok: await hashToken(token) }, ROOM_TTL_SECONDS);
