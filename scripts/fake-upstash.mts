@@ -45,6 +45,11 @@ export async function fakeUpstash(token: string) {
         const stop = Number(args[1]);
         return list.slice(start, stop === -1 ? undefined : stop + 1);
       }
+      case "LINDEX": {
+        const list = lists.get(key) ?? [];
+        const i = Number(args[0]);
+        return list[i < 0 ? list.length + i : i] ?? null;
+      }
       case "HSET": {
         const hash = hashes.get(key) ?? new Map<string, string>();
         let added = 0;

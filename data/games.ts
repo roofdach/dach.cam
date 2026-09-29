@@ -19,7 +19,7 @@ export const games: Game[] = [
   },
   {
     title: "sus",
-    description: "an among us. do your tasks, find the impostor, vote them off; or be the impostor and don't get caught.",
+    description: "an among us. walk the ship, do your tasks, find the impostor and vote them off; or be the impostor and don't get caught.",
     href: "/sus",
   },
   {

@@ -1,6 +1,7 @@
 /**
  * What the among us API does, apart from HTTP. The room is its log (see
- * lib/sus/room.ts) and one side list, `chat`, for what's said at meetings.
+ * lib/sus/room.ts), one side list, `chat`, for what's said at meetings,
+ * and a hash, `pos`, of where everyone's standing.
  *
  * Nearly everything in a game is secret from someone, but everyone gets the
  * same copy of the room so the CDN can share it (see lib/rooms/http.ts). So
@@ -10,6 +11,15 @@
  * or take, so nobody can tell an impostor's from its size, and sealed afresh
  * each time, so nobody can tell whose changed when. What the dead say at a
  * meeting is sealed the same way, with a key only the dead are given.
+ *
+ * Where everyone is, moment to moment, goes through `pos` several times a
+ * second: each player says where they are and hears where everyone else
+ * is, in one request. Those come far too often to read the log each time,
+ * so they're signed with the player's own key instead, which only needs
+ * the room's salt. The same hash carries the room's version whenever
+ * something happens that everyone should see at once, a kill or a meeting
+ * or an alarm, so browsers know to look at the room straight away rather
+ * than at their next poll.
  */
 
 import { randomId } from "../../random.ts";
@@ -24,17 +34,18 @@ import {
   MIN_PLAYERS,
   cleanSettings,
   gonePlayers,
-  isRoom,
   phaseOf,
   privateView,
   reduce,
   viewOf,
+  zoneReachable,
   type Me,
   type Room,
   type RoomView,
   type SusEvent,
 } from "../room.ts";
-import { SPOTS, TASK_BY_ID, exitsFrom, ventsFrom } from "../ship.ts";
+import { SPOTS, TASK_BY_ID, VENT_BY_ID, hops, isZone } from "../ship.ts";
+import { KILL_RANGE } from "../space.ts";
 
 export const ROOM_TTL_SECONDS = 6 * 60 * 60;
 /** How many chat lines a room shows. */
@@ -42,6 +53,14 @@ export const CHAT_LINES = 60;
 export const MAX_MESSAGE = 120;
 /** Every sealed view is padded out to a multiple of this many characters. */
 const PAD = 512;
+/** A position is shown for this long after it was sent, then taken as gone: someone who's stopped saying where they are has left, or is a ghost, or is in a vent. */
+export const POS_FRESH_MS = 2500;
+/** How far off a kill can be, going by where the two last said they were: more than the game allows, for the moment it takes to say. */
+export const KILL_REACH = KILL_RANGE * 2.5;
+/** The field of `pos` that holds the room's version; no player's id looks like it. */
+const VERSION = "_v";
+/** What everyone should hear about straight away, rather than at their next poll. */
+const LOUD = new Set<SusEvent["k"]>(["kill", "report", "button", "sabotage", "fix"]);
 
 type Store = RoomStore<SusEvent>;
 
@@ -69,6 +88,20 @@ export interface Sealed {
   box: string;
 }
 
+/** Where someone last said they were. */
+export interface Position {
+  x: number;
+  y: number;
+  /** Which way they face: 1 right, -1 left. */
+  f: number;
+  /** Whether they're walking. */
+  m: number;
+  /** 0 out and about, 1 hidden in a vent, 2 a ghost, whom only ghosts see. */
+  v: number;
+  /** When the server heard it. */
+  t: number;
+}
+
 export interface SusView extends RoomView {
   chat: ChatLine[];
   /** Everyone's own view, each sealed so only they can open it. */
@@ -82,18 +115,29 @@ export interface Reply {
   room: SusView;
   now: number;
   you?: Identity;
-  /** The key your view is sealed with: only ever sent to you. */
+  /** The key your view is sealed with, and your positions signed with: only ever sent to you. */
   key?: string;
   mine?: Mine | null;
 }
 
+const encoder = new TextEncoder();
 const base64 = (data: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(data)));
-const digest = async (text: string) => base64(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+const fromBase64 = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+const digest = async (text: string) => base64(await crypto.subtle.digest("SHA-256", encoder.encode(text)));
 
 /** The key a player's own view is sealed with, from the room's secret salt. */
 export const seatKey = (salt: string, player: string) => digest(`${salt}:seat:${player}`);
 /** The key the dead talk to each other with, this game. */
 export const ghostKey = (salt: string, game: number) => digest(`${salt}:ghosts:${game}`);
+
+/** What a signed request is signed over: its kind, who's sending it, and what it says. */
+export const signedText = (type: string, player: string, data: string) => `${type}\n${player}\n${data}`;
+
+/** Signs a request with a player's key; the browser does the same (see components/sus/room-client.ts). */
+export async function sign(key: string, type: string, player: string, data: string): Promise<string> {
+  const hmac = await crypto.subtle.importKey("raw", fromBase64(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return base64(await crypto.subtle.sign("HMAC", hmac, encoder.encode(signedText(type, player, data))));
+}
 
 async function mineOf(room: Room, player: string): Promise<Mine | null> {
   const me = privateView(room, player);
@@ -125,6 +169,20 @@ function parseChat(lines: string[]): ChatLine[] {
   return out;
 }
 
+/** The positions heard from recently, by player. */
+function parsePositions(fields: Record<string, string>, now: number): Record<string, Position> {
+  const out: Record<string, Position> = {};
+  for (const [id, value] of Object.entries(fields)) {
+    try {
+      const entry = JSON.parse(value) as Position;
+      if (id !== VERSION && [entry.x, entry.y, entry.f, entry.m, entry.v, entry.t].every(Number.isFinite) && now - entry.t < POS_FRESH_MS) out[id] = entry;
+    } catch {
+      // Damage; skip it.
+    }
+  }
+  return out;
+}
+
 /** Tidies a chat message, or null if nothing's left. */
 export function cleanMessage(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -142,14 +200,14 @@ function presence(room: Room, seen: StoredRoom<SusEvent>["seen"]): Record<string
 const CHAT: ListRead = { name: "chat", from: -CHAT_LINES };
 
 async function load(store: Store, code: string, now: number) {
-  const stored = await store.read(code, [CHAT]);
+  const stored = await store.read(code, [CHAT], ["pos"]);
   const room = stored && reduce(stored.events, now);
   if (!stored || !room) throw new RoomError(404, "there's no room with that code, or it has expired");
   return { stored, room };
 }
 
-async function assemble(room: Room, now: number, seen: Record<string, number>, chat: string[]): Promise<SusView> {
-  return { ...viewOf(room, now, seen), chat: parseChat(chat), seals: await sealAll(room) };
+async function assemble(room: Room, now: number, seen: Record<string, number>, stored: Pick<StoredRoom<SusEvent>, "lists">): Promise<SusView> {
+  return { ...viewOf(room, now, seen), chat: parseChat(stored.lists.chat ?? []), seals: await sealAll(room) };
 }
 
 /** Appends and replays again, reading back only if someone else wrote in between. */
@@ -157,13 +215,12 @@ async function commit(store: Store, code: string, stored: StoredRoom<SusEvent>, 
   if (stored.events.length + events.length > MAX_EVENTS) throw new RoomError(409, "this room has been going so long it's full; make a new one");
   const length = await store.append(code, events, ROOM_TTL_SECONDS, seen);
   const mine = { ...stored.seen, ...(seen ? { [seen.player]: { at: seen.at, tok: seen.tok } } : {}) };
-  const chat = stored.lists.chat ?? [];
   if (length === stored.events.length + events.length) {
     const room = reduce([...stored.events, ...events], now)!;
-    return { room, view: await assemble(room, now, presence(room, mine), chat) };
+    return { room, view: await assemble(room, now, presence(room, mine), stored) };
   }
   const fresh = await load(store, code, now);
-  return { room: fresh.room, view: await assemble(fresh.room, now, presence(fresh.room, { ...fresh.stored.seen, ...mine }), fresh.stored.lists.chat ?? []) };
+  return { room: fresh.room, view: await assemble(fresh.room, now, presence(fresh.room, { ...fresh.stored.seen, ...mine }), fresh.stored) };
 }
 
 export async function createRoom(store: Store, input: unknown, now: number): Promise<Reply> {
@@ -181,7 +238,7 @@ export async function createRoom(store: Store, input: unknown, now: number): Pro
     ];
     if (await store.create(code, events, { player: you.id, at: now, tok }, ROOM_TTL_SECONDS)) {
       const room = reduce(events, now)!;
-      return { room: await assemble(room, now, { [you.id]: now }, []), now, you, key: await seatKey(salt, you.id), mine: null };
+      return { room: await assemble(room, now, { [you.id]: now }, { lists: {} }), now, you, key: await seatKey(salt, you.id), mine: null };
     }
   }
   throw new RoomError(503, "couldn't find a free room code; try again");
@@ -192,7 +249,7 @@ export async function getRoom(store: Store, rawCode: unknown, now: number): Prom
   const { stored, room } = await load(store, code, now);
   const seen = presence(room, stored.seen);
   const gone = gonePlayers(room, seen, now);
-  if (gone.length === 0) return assemble(room, now, seen, stored.lists.chat ?? []);
+  if (gone.length === 0) return assemble(room, now, seen, stored);
   return (await commit(store, code, stored, gone.map((p) => ({ k: "leave", t: now, p, why: "gone" })), now)).view;
 }
 
@@ -234,10 +291,9 @@ export async function act(store: Store, rawCode: unknown, input: unknown, now: n
   const phase = phaseOf(room);
   const game = room.game;
   const agent = game?.agents.get(player.id);
-  const chat = stored.lists.chat ?? [];
 
   if (body.type === "me") {
-    return { room: await assemble(room, now, presence(room, stored.seen), chat), now, key: await seatKey(room.salt, player.id), mine: await mineOf(room, player.id) };
+    return { room: await assemble(room, now, presence(room, stored.seen), stored), now, key: await seatKey(room.salt, player.id), mine: await mineOf(room, player.id) };
   }
 
   if (body.type === "say") {
@@ -251,22 +307,26 @@ export async function act(store: Store, rawCode: unknown, input: unknown, now: n
       line = { ...line, text: box, iv };
     }
     await store.push(code, "chat", [JSON.stringify(line)], ROOM_TTL_SECONDS);
-    const lines = [...chat, JSON.stringify(line)].slice(-CHAT_LINES);
-    return { room: await assemble(room, now, presence(room, stored.seen), lines), now, mine: await mineOf(room, player.id) };
+    const lines = [...(stored.lists.chat ?? []), JSON.stringify(line)].slice(-CHAT_LINES);
+    return { room: await assemble(room, now, presence(room, stored.seen), { ...stored, lists: { chat: lines } }), now, mine: await mineOf(room, player.id) };
   }
 
   const playing = !!game && phase === "action" && !!agent && !agent.left;
   const g = game?.index ?? 0;
   let event: SusEvent;
   switch (body.type) {
-    case "move": {
-      if (!playing) throw new RoomError(409, "you can't go anywhere right now");
-      if (!isRoom(body.to)) throw new RoomError(400, "there's no room like that on this ship");
-      const vent = body.vent === true;
-      if (now < agent!.moveAt) throw new RoomError(409, "not so fast");
-      if (vent && (!agent!.impostor || !agent!.alive || !ventsFrom(agent!.room).includes(body.to))) throw new RoomError(409, "there's no vent to there from here");
-      if (!vent && agent!.alive && !exitsFrom(agent!.room).includes(body.to)) throw new RoomError(409, "you can't get there from here");
-      event = { k: "move", t: now, p: player.id, game: g, to: body.to, ...(vent ? { vent: true } : {}) };
+    case "zone":
+      if (!playing) throw new RoomError(409, "not now");
+      if (!isZone(body.zone)) throw new RoomError(400, "there's nowhere like that on this ship");
+      if (body.zone === agent!.zone) return { room: await assemble(room, now, presence(room, stored.seen), stored), now, mine: await mineOf(room, player.id) };
+      if (!zoneReachable(agent!, body.zone, now)) throw new RoomError(409, "you can't have got there from where you were");
+      event = { k: "zone", t: now, p: player.id, game: g, zone: body.zone };
+      break;
+    case "vent": {
+      const from = typeof body.from === "string" ? VENT_BY_ID.get(body.from) : undefined;
+      if (!playing || !agent!.impostor || !agent!.alive) throw new RoomError(409, "you can't do that");
+      if (!from || from.zone !== agent!.zone || typeof body.to !== "string" || !from.links.includes(body.to)) throw new RoomError(409, "that vent doesn't go there");
+      event = { k: "vent", t: now, p: player.id, game: g, from: from.id, to: body.to };
       break;
     }
     case "begin":
@@ -274,23 +334,31 @@ export async function act(store: Store, rawCode: unknown, input: unknown, now: n
       const task = typeof body.task === "string" ? TASK_BY_ID.get(body.task) : undefined;
       if (!playing) throw new RoomError(409, "not now");
       if (!task || !agent!.tasks.some((t) => t.id === task.id)) throw new RoomError(400, "that's not one of your tasks");
-      if (agent!.room !== task.room) throw new RoomError(409, `that's done in ${task.room}`);
+      if (agent!.zone !== task.room) throw new RoomError(409, `that's done in ${task.room}`);
       event = { k: body.type, t: now, p: player.id, game: g, task: task.id };
       break;
     }
-    case "kill":
+    case "kill": {
       if (!playing || !agent!.impostor || !agent!.alive) throw new RoomError(409, "you can't do that");
       if (now < agent!.killAt) throw new RoomError(409, "not yet");
-      if (typeof body.target !== "string" || game!.agents.get(body.target)?.room !== agent!.room || !game!.agents.get(body.target)?.alive) throw new RoomError(409, "they're not here any more");
-      event = { k: "kill", t: now, p: player.id, game: g, target: body.target };
+      const victim = typeof body.target === "string" ? game!.agents.get(body.target) : undefined;
+      if (!victim?.alive || victim.impostor || hops(victim.zone, agent!.zone) > 1) throw new RoomError(409, "they're not close enough");
+      // Where both last said they were, if they said lately.
+      const positions = parsePositions(stored.hashes.pos ?? {}, now);
+      const [a, b] = [positions[player.id], positions[victim.id]];
+      if (a && b && Math.hypot(a.x - b.x, a.y - b.y) > KILL_REACH) throw new RoomError(409, "they're not close enough");
+      event = { k: "kill", t: now, p: player.id, game: g, target: victim.id, x: Number(body.x), y: Number(body.y) };
       break;
-    case "report":
+    }
+    case "report": {
       if (!playing || !agent!.alive) throw new RoomError(409, "you can't do that");
-      if (typeof body.body !== "string" || !game!.bodies.some((b) => b.victim === body.body && b.room === agent!.room)) throw new RoomError(409, "there's no body here");
-      event = { k: "report", t: now, p: player.id, game: g, body: body.body };
+      const found = typeof body.body === "string" ? game!.bodies.find((b) => b.victim === body.body) : undefined;
+      if (!found || hops(found.zone, agent!.zone) > 1) throw new RoomError(409, "there's no body here");
+      event = { k: "report", t: now, p: player.id, game: g, body: found.victim };
       break;
+    }
     case "button":
-      if (!playing || !agent!.alive || agent!.room !== SPOTS.button) throw new RoomError(409, "the button's in the cafeteria");
+      if (!playing || !agent!.alive || agent!.zone !== SPOTS.button.zone) throw new RoomError(409, "the button's in the cafeteria");
       if (agent!.buttons <= 0) throw new RoomError(409, "you've used your emergency meeting");
       if (now < game!.buttonAt) throw new RoomError(409, "the button isn't ready yet");
       if (game!.sabotage?.kind === "reactor") throw new RoomError(409, "not while the reactor's melting down!");
@@ -302,11 +370,13 @@ export async function act(store: Store, rawCode: unknown, input: unknown, now: n
       if (game!.sabotage || now < game!.sabotageAt) throw new RoomError(409, "sabotage isn't ready yet");
       event = { k: "sabotage", t: now, p: player.id, game: g, kind: body.kind };
       break;
-    case "fix":
+    case "fix": {
+      const where = game?.sabotage?.kind === "lights" ? SPOTS.lights.zone : "reactor";
       if (!playing || !agent!.alive || !game!.sabotage || game!.sabotage.kind !== body.kind) throw new RoomError(409, "there's nothing to fix");
-      if (agent!.room !== SPOTS[game!.sabotage.kind]) throw new RoomError(409, `that's fixed in ${SPOTS[game!.sabotage.kind]}`);
+      if (agent!.zone !== where) throw new RoomError(409, `that's fixed in ${where}`);
       event = { k: "fix", t: now, p: player.id, game: g, kind: game!.sabotage.kind };
       break;
+    }
     case "vote": {
       const meeting = game?.meeting;
       if (!game || phase !== "meeting" || !meeting || body.meeting !== meeting.index || !agent?.alive) throw new RoomError(409, "you can't vote now");
@@ -350,7 +420,70 @@ export async function act(store: Store, rawCode: unknown, input: unknown, now: n
   }
 
   const after = await commit(store, code, stored, [event], now, me);
+  if (LOUD.has(event.k)) await store.swap(code, "pos", VERSION, String(after.view.version), ROOM_TTL_SECONDS);
   return { room: after.view, now, mine: await mineOf(after.room, player.id) };
+}
+
+/* ---------------------------------------------------------- positions */
+
+/**
+ * Rooms' salts, which never change, remembered by this server instance so a
+ * signed position usually costs nothing to check. A code can be reused once
+ * its room has gone, so a signature that doesn't check out asks again.
+ */
+const salts = new Map<string, string>();
+
+async function saltFor(store: Store, code: string, fresh = false): Promise<string> {
+  const cached = salts.get(code);
+  if (cached && !fresh) return cached;
+  const head = await store.head(code);
+  if (!head || head.k !== "create") throw new RoomError(404, "there's no room with that code, or it has expired");
+  salts.set(code, head.salt);
+  if (salts.size > 1000) salts.delete(salts.keys().next().value!);
+  return head.salt;
+}
+
+async function verify(store: Store, code: string, type: string, player: string, data: string, mac: string): Promise<void> {
+  for (const fresh of [false, true]) {
+    const key = await seatKey(await saltFor(store, code, fresh), player);
+    const hmac = await crypto.subtle.importKey("raw", fromBase64(key), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+    let signature: ReturnType<typeof fromBase64>;
+    try {
+      signature = fromBase64(mac);
+    } catch {
+      break;
+    }
+    if (await crypto.subtle.verify("HMAC", hmac, signature, encoder.encode(signedText(type, player, data)))) return;
+  }
+  throw new RoomError(401, "that request wasn't signed right");
+}
+
+const isId = (value: unknown): value is string => typeof value === "string" && /^[a-z0-9]{1,24}$/.test(value);
+
+/**
+ * Where you are, signed, and where everyone else is: several times a second
+ * while a game's on. The answer leaves you out, and anyone who's gone quiet,
+ * and says what version the room was at when something last happened that
+ * everyone should see.
+ */
+export async function pos(store: Store, rawCode: unknown, input: unknown, now: number): Promise<{ now: number; pos: Record<string, Position>; version: number }> {
+  const code = codeFrom(rawCode);
+  const { player, data, mac } = record(input);
+  if (!isId(player) || typeof data !== "string" || data.length > 200 || typeof mac !== "string" || mac.length > 100) throw new RoomError(400, "that request made no sense");
+  await verify(store, code, "pos", player, data, mac);
+  let payload: Record<string, unknown>;
+  try {
+    payload = record(JSON.parse(data));
+  } catch {
+    throw new RoomError(400, "that request made no sense");
+  }
+  const { x, y, f, m, v } = payload;
+  if (![x, y, f, m, v].every((n) => typeof n === "number" && Number.isFinite(n))) throw new RoomError(400, "that request made no sense");
+  const mine: Position = { x: Math.round(x as number), y: Math.round(y as number), f: (f as number) < 0 ? -1 : 1, m: m ? 1 : 0, v: v === 1 || v === 2 ? v : 0, t: now };
+  const all = await store.swap(code, "pos", player, JSON.stringify(mine), ROOM_TTL_SECONDS);
+  const others = parsePositions(all, now);
+  delete others[player];
+  return { now, pos: others, version: Number(all[VERSION]) || 0 };
 }
 
 /** A player saying they're still here: one hash write, checked by whoever reads it (see geo's ping). */

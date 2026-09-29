@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useState, type ReactNode } from "react";
 import {
   IMPOSTOR_CHOICES,
   KILL_CHOICES,
@@ -19,6 +19,7 @@ import { useServerNow } from "@/components/game/clock";
 import { Connecting, ErrorLine, JoinForm, Leave, RoomGone, Shell, useAutoJoin, type GameName } from "@/components/game/room-ui";
 import { Button, Choice, plural } from "@/components/game/ui";
 import { Bean } from "./Bean";
+import { Engine } from "./engine";
 import { Ejection, Meeting } from "./Meeting";
 import { Play } from "./Play";
 import { useSusRoom, type Snapshot, type SusClient } from "./room-client";
@@ -32,6 +33,11 @@ export function Room({ code }: { code: string }) {
   const [snapshot, client] = useSusRoom(code);
   const { status, view, me, mine } = snapshot;
   useAutoJoin(JOIN_FLAG, code, snapshot, client);
+  // Where you're walking, which lasts from one round to the next.
+  const [engine] = useState(() => new Engine(client));
+  useLayoutEffect(() => {
+    if (view && me) engine.sync(view, mine, me);
+  }, [engine, view, mine, me]);
 
   const gone = RoomGone({ game: GAME, code, status });
   if (gone) return gone;
@@ -47,9 +53,9 @@ export function Room({ code }: { code: string }) {
   if (game.phase === "over") return <Over view={view} me={me!} snapshot={snapshot} client={client} />;
   if (!mine || mine.game !== game.index) return <Watching view={view} me={me!} client={client} />;
   if (game.phase === "roles") return <Roles view={view} me={me!} snapshot={snapshot} />;
-  if (game.phase === "meeting") return <Meeting view={view} me={me!} snapshot={snapshot} client={client} />;
+  if (game.phase === "meeting") return <Meeting view={view} me={me!} snapshot={snapshot} client={client} engine={engine} />;
   if (game.phase === "ejection") return <Ejection view={view} me={me!} />;
-  return <Play view={view} me={me!} snapshot={snapshot} client={client} />;
+  return <Play view={view} me={me!} snapshot={snapshot} client={client} engine={engine} />;
 }
 
 /* ------------------------------------------------------------- helpers */
@@ -211,12 +217,12 @@ function Lobby({ view, me, snapshot, client }: { view: SusView; me: string; snap
           how to play
         </h2>
         <p className="mt-2">
-          everyone&rsquo;s a crewmate, except the impostors, and only they know who they are. tap a room next to yours to go there; you can
-          only see who&rsquo;s in the room with you. crewmates do their tasks (the yellow marks on the map). impostors pretend to, kill
-          anyone they get alone, sneak through vents and sabotage the ship: the lights, so the crew can&rsquo;t see, or the reactor, which
-          two people have to hold at once before it melts down. find a body, or press the button in the cafeteria, and everyone meets to
-          talk it over and vote someone off. the crew win by finishing every task or voting off every impostor; the impostors win once
-          there are as many of them as crew.
+          everyone&rsquo;s a crewmate, except the impostors, and only they know who they are. walk about the ship with WASD or the arrow
+          keys, or drag anywhere on a phone; you only see what&rsquo;s in your line of sight. crewmates do their tasks (follow the yellow
+          arrows) with E. impostors pretend to, kill anyone they catch alone (Q), sneak through vents (V) and sabotage the ship: the lights,
+          so the crew can hardly see, or the reactor, which two people have to hold at once before it melts down. find a body (R), or press
+          the button on the cafeteria table, and everyone meets to talk it over and vote someone off. the crew win by finishing every task
+          or voting off every impostor; the impostors win once there are as many of them as crew.
         </p>
       </section>
     </Shell>

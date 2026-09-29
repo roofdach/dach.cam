@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { unseal } from "@/lib/draw/secret";
 import { EJECT_MS, type PlayerView } from "@/lib/sus/room";
 import type { ChatLine, Mine, SusView } from "@/lib/sus/server/rooms";
-import { ROOMS } from "@/lib/sus/ship";
+import { ZONES } from "@/lib/sus/ship";
 import { useServerNow } from "@/components/game/clock";
 import { ErrorLine } from "@/components/game/room-ui";
 import { Bean } from "./Bean";
+import type { Engine } from "./engine";
+import { noteLine } from "./Play";
 import { nameOf, playersById } from "./Room";
 import type { Snapshot, SusClient } from "./room-client";
 
@@ -15,7 +17,7 @@ const until = (at: number, now: number) => Math.max(0, Math.ceil((at - now) / 10
 
 /* ------------------------------------------------------------- meeting */
 
-export function Meeting({ view, me, snapshot, client }: { view: SusView; me: string; snapshot: Snapshot; client: SusClient }) {
+export function Meeting({ view, me, snapshot, client, engine }: { view: SusView; me: string; snapshot: Snapshot; client: SusClient; engine: Engine }) {
   const game = view.game!;
   const meeting = game.meeting!;
   const mine = snapshot.mine!;
@@ -27,6 +29,8 @@ export function Meeting({ view, me, snapshot, client }: { view: SusView; me: str
   const voted = new Set(meeting.voted);
   const canVote = mine.alive && mine.vote === null && open;
   const caller = nameOf(players, meeting.caller, me);
+  // What you saw since the last meeting, remembered as you walked about.
+  const notes = useSyncExternalStore(engine.subscribe, engine.getHud, engine.getHud).notes;
 
   const cast = async () => {
     if (!pick) return;
@@ -43,7 +47,7 @@ export function Meeting({ view, me, snapshot, client }: { view: SusView; me: str
               <h1 className="animate-pop text-[26px] font-black tracking-tight sm:text-[32px]">{meeting.body ? "dead body reported" : "emergency meeting"}</h1>
               <p className="text-[14px] text-white/75">
                 {meeting.body
-                  ? `${caller} found ${nameOf(players, meeting.body, me)}${meeting.body === me ? "r" : "'s"} body in ${ROOMS[meeting.where!].name}.`
+                  ? `${caller} found ${nameOf(players, meeting.body, me)}${meeting.body === me ? "r" : "'s"} body in ${ZONES[meeting.where!].name}.`
                   : `${caller} pressed the button.`}{" "}
                 who is the impostor?
               </p>
@@ -111,18 +115,14 @@ export function Meeting({ view, me, snapshot, client }: { view: SusView; me: str
           </div>
           <ErrorLine snapshot={snapshot} client={client} />
 
-          {mine.seen.length > 0 && (
+          {notes.length > 0 && (
             <section aria-labelledby="saw" className="mt-5 rounded-xl bg-[#e03131]/15 p-3">
               <h2 id="saw" className="text-[13px] font-semibold text-[#ff8787]">
                 what you saw
               </h2>
               <ul className="mt-1 space-y-0.5 text-[14px]">
-                {mine.seen.map((note) => (
-                  <li key={`${note.t}:${note.kind}:${note.who}`}>
-                    {note.kind === "kill"
-                      ? `${nameOf(players, note.who, me)} killed ${nameOf(players, note.whom, me)} in ${ROOMS[note.room].name}`
-                      : `${nameOf(players, note.who, me)} used a vent in ${ROOMS[note.room].name}`}
-                  </li>
+                {notes.map((note) => (
+                  <li key={`${note.t}:${note.kind}:${note.who.join()}`}>{noteLine(note, players, me)}</li>
                 ))}
               </ul>
             </section>

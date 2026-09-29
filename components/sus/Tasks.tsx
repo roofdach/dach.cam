@@ -321,8 +321,9 @@ function Numbers({ seed, onDone }: Props) {
 
 /* ----------------------------------------------------------------- scan */
 
-function Scan({ seed, onDone, opened, impostor }: Props & { opened: number; impostor: boolean }) {
+function Scan({ seed, onDone, impostor }: Props & { impostor: boolean }) {
   const now = useLocalNow(100);
+  const [opened] = useState(Date.now);
   const [card] = useState(() => {
     const random = seededRandom(seed);
     return { height: `${3 + Math.floor(random() * 2)}'${Math.floor(random() * 12)}"`, weight: `${80 + Math.floor(random() * 40)}lb`, blood: ["O-", "O+", "A-", "A+", "B+", "AB+"][Math.floor(random() * 6)] };
@@ -618,7 +619,7 @@ export function Switches({ seed, onDone }: Props) {
 /* ---------------------------------------------------------------- panel */
 
 /** A task's game, whichever it is. `onDone` is called once, however it gets there. */
-export function TaskGame({ task, seed, opened, impostor, onDone }: { task: Task; seed: string; opened: number; impostor: boolean; onDone: () => void }) {
+export function TaskGame({ task, seed, impostor, onDone }: { task: Task; seed: string; impostor: boolean; onDone: () => void }) {
   const done = useRef(false);
   const finish = useCallback(() => {
     if (done.current) return;
@@ -640,7 +641,7 @@ export function TaskGame({ task, seed, opened, impostor, onDone }: { task: Task;
     case "numbers":
       return <Numbers {...props} />;
     case "scan":
-      return <Scan {...props} opened={opened} impostor={impostor} />;
+      return <Scan {...props} impostor={impostor} />;
     case "asteroids":
       return <Asteroids {...props} />;
     case "shields":

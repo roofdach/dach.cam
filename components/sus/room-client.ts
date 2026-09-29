@@ -3,8 +3,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { unseal } from "@/lib/draw/secret";
 import type { Sabotage } from "@/lib/sus/room";
-import type { Mine, SusView } from "@/lib/sus/server/rooms";
-import type { RoomId } from "@/lib/sus/ship";
+import type { Mine, Position, SusView } from "@/lib/sus/server/rooms";
+import type { ZoneId } from "@/lib/sus/ship";
 import { noteServerTime, serverNow } from "@/components/game/clock";
 import { KEYS, forget, isString, load, save } from "@/components/game/storage";
 
@@ -14,7 +14,9 @@ import { KEYS, forget, isString, load, save } from "@/components/game/storage";
  * same for everyone so Vercel's CDN can share it, pings now and then, and
  * sends what you do. Your own view, who you are and what you can see, comes
  * sealed in the room with everyone else's (see lib/sus/server/rooms.ts), and
- * this opens yours with the key you were given when you sat down.
+ * this opens yours with the key you were given when you sat down. The same
+ * key signs where you're standing, which goes several times a second while
+ * you walk about (see ./engine.ts).
  */
 
 interface Identity {
@@ -43,6 +45,17 @@ export interface Snapshot {
 const HIDDEN_POLL_MS = 15_000;
 const PING_MS = 20_000;
 
+const encoder = new TextEncoder();
+const fromBase64 = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+const toBase64 = (data: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(data)));
+
+/** What a position request hears back: everyone else's, and the room's version when something last happened. */
+export interface Positions {
+  now: number;
+  pos: Record<string, Position>;
+  version: number;
+}
+
 export class SusClient {
   readonly code: string;
   private snapshot: Snapshot;
@@ -60,6 +73,8 @@ export class SusClient {
   private leaving = false;
   private synced = false;
   private askedAt = 0;
+  /** The key positions are signed with, made from the seat key once. */
+  private signer: { key: string; hmac: Promise<CryptoKey> } | null = null;
 
   constructor(code: string) {
     this.code = code;
@@ -120,11 +135,12 @@ export class SusClient {
     this.pollTimer = setTimeout(() => void this.poll(), this.failures ? Math.min(15_000, base * 2 ** this.failures) : base);
   }
 
-  private async poll() {
+  /** Asks for the room; with a version, one the CDN can't have kept from before it (everyone asking for the same one shares it). */
+  private async poll(version?: number) {
     if (!this.running) return;
     const sentAt = Date.now();
     try {
-      const response = await fetch(`/api/sus/rooms/${this.code}`, { headers: { Accept: "application/json" } });
+      const response = await fetch(`/api/sus/rooms/${this.code}${version ? `?v=${version}` : ""}`, { headers: { Accept: "application/json" } });
       const body = (await response.json().catch(() => null)) as (SusView & { error?: string }) | null;
       if (response.status === 404) return this.set({ status: "missing" });
       if (response.status === 503) return this.set({ status: "unavailable" });
@@ -290,10 +306,12 @@ export class SusClient {
     return this.snapshot.view?.game?.index ?? 0;
   }
 
-  move = (to: RoomId, vent = false) => this.act("move", { game: this.game, to, vent });
+  /** Says you've walked into another zone: quietly, since the next step will say it again if this one didn't take. */
+  zone = (zone: ZoneId) => this.request({ type: "zone", game: this.game, zone });
+  vent = (from: string, to: string) => this.act("vent", { game: this.game, from, to });
   task = (task: string) => this.act("task", { game: this.game, task });
   begin = (task: string) => this.act("begin", { game: this.game, task });
-  kill = (target: string) => this.act("kill", { game: this.game, target });
+  kill = (target: string, x: number, y: number) => this.act("kill", { game: this.game, target, x, y });
   report = (body: string) => this.act("report", { game: this.game, body });
   button = () => this.act("button", { game: this.game });
   sabotage = (kind: Sabotage) => this.act("sabotage", { game: this.game, kind });
@@ -303,6 +321,37 @@ export class SusClient {
   /** A line at a meeting. It doesn't hold anything else up. */
   async say(text: string): Promise<boolean> {
     return (await this.request({ type: "say", text }, true)) !== null;
+  }
+
+  /**
+   * Says where you are, signed with your seat's key, and hears where
+   * everyone else is. If something's happened since the room you have, a
+   * kill or a meeting, the room's fetched at once.
+   */
+  async position(where: { x: number; y: number; f: number; m: number; v: number }): Promise<Positions | null> {
+    const identity = this.identity;
+    if (!identity?.key || !this.running) return null;
+    if (this.signer?.key !== identity.key) {
+      this.signer = { key: identity.key, hmac: crypto.subtle.importKey("raw", fromBase64(identity.key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]) };
+    }
+    const data = JSON.stringify(where);
+    const mac = toBase64(await crypto.subtle.sign("HMAC", await this.signer.hmac, encoder.encode(`pos\n${identity.id}\n${data}`)));
+    try {
+      const reply = await this.post({ type: "pos", player: identity.id, data, mac });
+      const body = reply.body as (Positions & { error?: string }) | null;
+      if (!reply.ok || !body || typeof body.now !== "number") {
+        if (reply.status === 401) this.askForKey();
+        return null;
+      }
+      noteServerTime(body.now, reply.sentAt, Date.now());
+      if (body.version > this.latest.version && this.running) {
+        clearTimeout(this.pollTimer);
+        void this.poll(body.version);
+      }
+      return body;
+    } catch {
+      return null;
+    }
   }
 
   private async ping() {

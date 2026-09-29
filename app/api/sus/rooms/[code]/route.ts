@@ -1,5 +1,5 @@
 import type { SusEvent } from "@/lib/sus/room";
-import { act, getRoom, ping } from "@/lib/sus/server/rooms";
+import { act, getRoom, ping, pos } from "@/lib/sus/server/rooms";
 import { NOT_SET_UP, failure, fresh, readBody, shared } from "@/lib/rooms/http";
 import { storeFromEnv } from "@/lib/rooms/store";
 
@@ -14,15 +14,17 @@ export async function GET(_request: Request, context: RouteContext<"/api/sus/roo
   }
 }
 
-/** Anything a player does: join, move, do a task, kill, report, vote, talk, change the settings, start, leave, or say they're still here. */
+/** Anything a player does: join, walk about, do a task, kill, report, vote, talk, change the settings, start, leave, or say they're still here. */
 export async function POST(request: Request, context: RouteContext<"/api/sus/rooms/[code]">) {
   const store = storeFromEnv<SusEvent>("sus");
   if (!store) return fresh({ error: NOT_SET_UP }, 503);
   try {
     const { code } = await context.params;
     const body = await readBody(request);
-    const isPing = typeof body === "object" && body !== null && (body as { type?: unknown }).type === "ping";
-    return fresh(await (isPing ? ping : act)(store, code, body, Date.now()));
+    const type = typeof body === "object" && body !== null ? (body as { type?: unknown }).type : undefined;
+    // Where you're standing comes several times a second, so it skips reading the room.
+    const handle = type === "ping" ? ping : type === "pos" ? pos : act;
+    return fresh(await handle(store, code, body, Date.now()));
   } catch (error) {
     return failure(error);
   }

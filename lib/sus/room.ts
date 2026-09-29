@@ -7,17 +7,21 @@
  * task or voting off every impostor; the impostors win once there are as
  * many of them as crew, or if they melt the reactor down.
  *
- * You go from room to room (see lib/sus/ship.ts) and only see who's in
- * the room with you, so almost everything here is secret from someone. As
- * with the other rooms (see lib/draw/room.ts), the server keeps a log of
- * what happened and this replays it; `viewOf` is what everyone may know,
- * and `privateView` is what one player may, which the server seals so only
- * they can read it (see lib/sus/server/rooms.ts).
+ * Everyone walks about the ship freely, and where exactly they are goes
+ * through the server several times a second, outside the log (see
+ * lib/sus/server/rooms.ts). What the room
+ * keeps is which zone of the ship each is in, a room or a stretch of
+ * corridor (see lib/sus/ship.ts), which is enough to check that a kill, a
+ * report or a task happened where it could. As with the other rooms (see
+ * lib/draw/room.ts), the server keeps a log of what happened and this
+ * replays it; `viewOf` is what everyone may know, and `privateView` is what
+ * one player may, which the server seals so only they can read it (see
+ * lib/sus/server/rooms.ts).
  */
 
 import { cleanName } from "../rooms/codes.ts";
 import { seededRandom, type Random } from "../random.ts";
-import { CAMERAS, COLORS, ROOM_IDS, SPOTS, TASKS, TASK_BY_ID, exitsFrom, ventsFrom, type RoomId, type Task } from "./ship.ts";
+import { CAMERAS, COLORS, ROOM_IDS, SPOTS, TASKS, TASK_BY_ID, VENT_BY_ID, centerOf, hops, inCamera, isZone, zoneAt, type Task, type ZoneId } from "./ship.ts";
 
 export const IMPOSTOR_CHOICES = [1, 2, 3] as const;
 /** Seconds between kills. */
@@ -44,8 +48,6 @@ export const MIN_PLAYERS = 4;
 export const MAX_PLAYERS = COLORS.length;
 /** Seeing who you are. */
 export const ROLES_MS = 6000;
-/** Between one step and the next: the ship takes a moment to cross. */
-export const MOVE_MS = 1500;
 /** Before the first kill and sabotage of the game, and the first after a meeting. */
 export const FIRST_KILL_MS = 10_000;
 export const FIRST_SABOTAGE_MS = 10_000;
@@ -60,7 +62,15 @@ export const BUTTONS_EACH = 1;
 export const EJECT_MS = 7000;
 export const AWAY_MS = 30_000;
 export const GONE_MS = 60_000;
-export const MAX_EVENTS = 10_000;
+export const MAX_EVENTS = 12_000;
+/**
+ * How many zones someone can be said to have crossed at once. Walking,
+ * you're never more than one on from the last the room heard about, but a
+ * word can go missing; after a quiet spell, a little further is believed.
+ */
+export const ZONE_REACH = 2;
+export const ZONE_REACH_LATER = 4;
+export const ZONE_QUIET_MS = 2000;
 
 /** How many impostors a game of this size gets: one up to six players, two for seven or eight, three for nine or more. */
 export const impostorsFor = (players: number, wanted: number) => Math.max(1, Math.min(wanted, players >= 9 ? 3 : players >= 7 ? 2 : 1));
@@ -73,10 +83,11 @@ export type SusEvent =
   | { k: "leave"; t: number; p: string; why: "left" | "gone" | "kicked"; by?: string }
   | { k: "settings"; t: number; p: string; settings: Settings }
   | { k: "start"; t: number; p: string }
-  | { k: "move"; t: number; p: string; game: number; to: RoomId; vent?: boolean }
+  | { k: "zone"; t: number; p: string; game: number; zone: ZoneId }
+  | { k: "vent"; t: number; p: string; game: number; from: string; to: string }
   | { k: "begin"; t: number; p: string; game: number; task: string }
   | { k: "task"; t: number; p: string; game: number; task: string }
-  | { k: "kill"; t: number; p: string; game: number; target: string }
+  | { k: "kill"; t: number; p: string; game: number; target: string; x: number; y: number }
   | { k: "report"; t: number; p: string; game: number; body: string }
   | { k: "button"; t: number; p: string; game: number }
   | { k: "sabotage"; t: number; p: string; game: number; kind: Sabotage }
@@ -96,11 +107,6 @@ export interface Player {
   since: number;
 }
 
-/** Something you saw happen: nobody else knows you did. */
-export type Note =
-  | { t: number; kind: "kill"; who: string; whom: string; room: RoomId }
-  | { t: number; kind: "vent"; who: string; room: RoomId };
-
 /** Someone playing this game. */
 export interface Agent {
   id: string;
@@ -111,10 +117,9 @@ export interface Agent {
   ejected: boolean;
   left: boolean;
   killer: string | null;
-  room: RoomId;
-  /** When they got to the room they're in. */
+  zone: ZoneId;
+  /** When they got to the zone they're in. */
   arrived: number;
-  moveAt: number;
   /** Real ones for crew; for impostors, ones to pretend to do. */
   tasks: { id: string; done: boolean }[];
   /** When they got on the medbay scanner, while they're on it. */
@@ -124,12 +129,13 @@ export interface Agent {
   killAt: number;
   buttons: number;
   vote: string | null;
-  seen: Note[];
 }
 
 export interface Body {
   victim: string;
-  room: RoomId;
+  zone: ZoneId;
+  x: number;
+  y: number;
   at: number;
 }
 
@@ -138,7 +144,7 @@ export interface Meeting {
   caller: string;
   /** Whose body was found, and where; null for the button. */
   body: string | null;
-  where: RoomId | null;
+  where: ZoneId | null;
   votesFrom: number;
   ends: number;
 }
@@ -165,6 +171,8 @@ export interface Game {
   phase: GamePhase;
   /** When the phase that's on ends: not used while playing, where only the reactor has a clock. */
   ends: number;
+  /** Counts each time everyone's sent back to the cafeteria: the start, and after each meeting. */
+  round: number;
   agents: Map<string, Agent>;
   bodies: Body[];
   sabotage: { kind: Sabotage; ends: number | null } | null;
@@ -201,7 +209,11 @@ export function cleanSettings(value: unknown): Settings | null {
   return { impostors, kill, tasks, meeting, confirm };
 }
 
-export const isRoom = (value: unknown): value is RoomId => oneOf(ROOM_IDS, value);
+/** Whether the room believes someone went from one zone to another, given how long since it last heard. */
+export function zoneReachable(agent: Pick<Agent, "zone" | "arrived" | "alive">, to: ZoneId, t: number): boolean {
+  if (!agent.alive) return true;
+  return hops(agent.zone, to) <= (t - agent.arrived >= ZONE_QUIET_MS ? ZONE_REACH_LATER : ZONE_REACH);
+}
 
 /* ------------------------------------------------------------ replay */
 
@@ -242,7 +254,7 @@ export function tasksFor(salt: string, game: number, player: string, count: numb
 
 const agentsOf = (game: Game) => [...game.agents.values()];
 
-/** Whether the lights are out for this agent: the living crew can't see anyone in the dark. */
+/** Whether the lights are out for this agent: the living crew can hardly see in the dark. */
 const inTheDark = (game: Game, agent: Agent) => game.sabotage?.kind === "lights" && agent.alive && !agent.impostor;
 
 function finish(game: Game, at: number, winner: Winner, why: Why) {
@@ -266,10 +278,11 @@ function checkWin(game: Game, at: number, cause: Why) {
   if (workers.length > 0 && workers.every((a) => a.tasks.every((t) => t.done))) finish(game, at, "crew", "tasks");
 }
 
-/** Everyone back to the cafeteria, and off: at the start, and after every meeting. */
+/** Everyone back round the cafeteria table, and off: at the start, and after every meeting. */
 function play(game: Game, at: number, first: boolean) {
   game.phase = "action";
   game.ends = at;
+  game.round++;
   game.meeting = null;
   game.ejection = null;
   game.bodies = [];
@@ -277,13 +290,11 @@ function play(game: Game, at: number, first: boolean) {
   game.sabotageAt = at + FIRST_SABOTAGE_MS;
   game.buttonAt = at + BUTTON_MS;
   for (const agent of game.agents.values()) {
-    agent.room = "cafeteria";
+    agent.zone = "cafeteria";
     agent.arrived = at;
-    agent.moveAt = at;
     agent.scanning = null;
     agent.holding = false;
     agent.vote = null;
-    agent.seen = [];
     agent.killAt = at + (first ? FIRST_KILL_MS : game.settings.kill * 1000);
   }
 }
@@ -306,7 +317,7 @@ function callMeeting(game: Game, at: number, caller: string, body: Body | null) 
   game.bodies = [];
   game.sabotage = null;
   const { discuss, vote } = MEETINGS[game.settings.meeting];
-  game.meeting = { index: game.meetings, caller, body: body?.victim ?? null, where: body?.room ?? null, votesFrom: at + discuss * 1000, ends: at + (discuss + vote) * 1000 };
+  game.meeting = { index: game.meetings, caller, body: body?.victim ?? null, where: body?.zone ?? null, votesFrom: at + discuss * 1000, ends: at + (discuss + vote) * 1000 };
   game.phase = "meeting";
   game.ends = game.meeting.ends;
 }
@@ -365,9 +376,13 @@ function advance(room: Room, t: number) {
   }
 }
 
-/** Everyone in the room with `agent` who'd see what they did: the living, if they can see. */
-function witnesses(game: Game, agent: Agent, room: RoomId, except: string[] = []) {
-  return agentsOf(game).filter((w) => w.alive && w.room === room && w.id !== agent.id && !except.includes(w.id) && !inTheDark(game, w));
+/** Where a body's left: where the killer saw it, if that's on the floor near the victim; otherwise the middle of their zone. */
+function bodyAt(victim: Agent, x: unknown, y: unknown): { x: number; y: number } {
+  if (typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y)) {
+    const zone = zoneAt(x, y);
+    if (zone && hops(zone, victim.zone) <= 1) return { x: Math.round(x), y: Math.round(y) };
+  }
+  return centerOf(victim.zone);
 }
 
 function apply(room: Room, event: SusEvent) {
@@ -446,16 +461,14 @@ function apply(room: Room, event: SusEvent) {
           ejected: false,
           left: false,
           killer: null,
-          room: "cafeteria",
+          zone: "cafeteria",
           arrived: t,
-          moveAt: t,
           tasks: tasksFor(room.salt, room.games, p.id, settings.tasks).map((task) => ({ id: task.id, done: false })),
           scanning: null,
           holding: false,
           killAt: NEVER,
           buttons: BUTTONS_EACH,
           vote: null,
-          seen: [],
         });
       }
       room.game = {
@@ -464,6 +477,7 @@ function apply(room: Room, event: SusEvent) {
         impostors: count,
         phase: "roles",
         ends: t + ROLES_MS,
+        round: 0,
         agents,
         bodies: [],
         sabotage: null,
@@ -477,28 +491,27 @@ function apply(room: Room, event: SusEvent) {
       return;
     }
 
-    case "move": {
-      if (!acting || t < acting.moveAt || !isRoom(event.to) || event.to === acting.room) return;
-      if (event.vent) {
-        if (!acting.impostor || !acting.alive || !ventsFrom(acting.room).includes(event.to)) return;
-        // Anyone who can see sees you go in, and come out.
-        for (const w of witnesses(game!, acting, acting.room)) w.seen.push({ t, kind: "vent", who: acting.id, room: acting.room });
-        for (const w of witnesses(game!, acting, event.to)) w.seen.push({ t, kind: "vent", who: acting.id, room: event.to });
-      } else if (acting.alive && !exitsFrom(acting.room).includes(event.to)) {
-        // Ghosts go anywhere.
-        return;
-      }
-      acting.room = event.to;
+    case "zone": {
+      if (!acting || !isZone(event.zone) || event.zone === acting.zone || !zoneReachable(acting, event.zone, t)) return;
+      acting.zone = event.zone;
       acting.arrived = t;
-      acting.moveAt = t + MOVE_MS;
       acting.scanning = null;
       acting.holding = false;
       return;
     }
 
+    case "vent": {
+      const from = VENT_BY_ID.get(event.from);
+      const to = VENT_BY_ID.get(event.to);
+      if (!acting?.impostor || !acting.alive || !from || !to || from.zone !== acting.zone || !from.links.includes(to.id)) return;
+      acting.zone = to.zone;
+      acting.arrived = t;
+      return;
+    }
+
     case "begin": {
       const task = TASK_BY_ID.get(event.task);
-      if (!acting || acting.impostor || task?.kind !== "scan" || acting.room !== task.room) return;
+      if (!acting || acting.impostor || task?.kind !== "scan" || acting.zone !== task.room) return;
       if (acting.tasks.some((x) => x.id === task.id && !x.done)) acting.scanning = t;
       return;
     }
@@ -506,7 +519,7 @@ function apply(room: Room, event: SusEvent) {
     case "task": {
       const task = TASK_BY_ID.get(event.task);
       const mine = acting?.tasks.find((x) => x.id === event.task);
-      if (!acting || acting.impostor || !task || !mine || mine.done || acting.room !== task.room) return;
+      if (!acting || acting.impostor || !task || !mine || mine.done || acting.zone !== task.room) return;
       const since = task.kind === "scan" ? acting.scanning : acting.arrived;
       if (since === null || t - since < task.min) return;
       mine.done = true;
@@ -517,28 +530,26 @@ function apply(room: Room, event: SusEvent) {
 
     case "kill": {
       const victim = game?.agents.get(event.target);
-      if (!acting?.impostor || !acting.alive || t < acting.killAt || !victim?.alive || victim.impostor || victim.room !== acting.room) return;
-      const seeing = witnesses(game!, acting, acting.room, [victim.id]);
+      if (!acting?.impostor || !acting.alive || t < acting.killAt || !victim?.alive || victim.impostor || hops(victim.zone, acting.zone) > 1) return;
       victim.alive = false;
       victim.killer = acting.id;
       victim.scanning = null;
       victim.holding = false;
-      game!.bodies.push({ victim: victim.id, room: victim.room, at: t });
+      game!.bodies.push({ victim: victim.id, zone: victim.zone, ...bodyAt(victim, event.x, event.y), at: t });
       acting.killAt = t + game!.settings.kill * 1000;
-      for (const w of seeing) w.seen.push({ t, kind: "kill", who: acting.id, whom: victim.id, room: victim.room });
       checkWin(game!, t, "outnumbered");
       return;
     }
 
     case "report": {
       const body = game?.bodies.find((b) => b.victim === event.body);
-      if (!acting?.alive || !body || body.room !== acting.room) return;
+      if (!acting?.alive || !body || hops(body.zone, acting.zone) > 1) return;
       callMeeting(game!, t, acting.id, body);
       return;
     }
 
     case "button": {
-      if (!acting?.alive || acting.room !== SPOTS.button || acting.buttons <= 0 || t < game!.buttonAt || game!.sabotage?.kind === "reactor") return;
+      if (!acting?.alive || acting.zone !== SPOTS.button.zone || acting.buttons <= 0 || t < game!.buttonAt || game!.sabotage?.kind === "reactor") return;
       acting.buttons--;
       callMeeting(game!, t, acting.id, null);
       return;
@@ -555,10 +566,10 @@ function apply(room: Room, event: SusEvent) {
     case "fix": {
       const sabotage = game?.sabotage;
       if (!acting?.alive || !sabotage || sabotage.kind !== event.kind) return;
-      if (sabotage.kind === "lights" && acting.room === SPOTS.lights) sabotageFixed(game!, t);
-      if (sabotage.kind === "reactor" && acting.room === SPOTS.reactor) {
+      if (sabotage.kind === "lights" && acting.zone === SPOTS.lights.zone) sabotageFixed(game!, t);
+      if (sabotage.kind === "reactor" && acting.zone === "reactor") {
         acting.holding = true;
-        const hands = agentsOf(game!).filter((a) => a.alive && a.holding && a.room === SPOTS.reactor).length;
+        const hands = agentsOf(game!).filter((a) => a.alive && a.holding && a.zone === "reactor").length;
         if (hands >= REACTOR_HANDS) sabotageFixed(game!, t);
       }
       return;
@@ -632,6 +643,8 @@ export interface GameView {
   index: number;
   phase: GamePhase;
   ends: number;
+  /** Goes up each time everyone's sent back to the cafeteria table. */
+  round: number;
   impostors: number;
   /** Everyone's tasks together, the bar all the crew are filling. */
   tasks: { done: number; total: number };
@@ -689,11 +702,12 @@ export function viewOf(room: Room, now: number, seen: Readonly<Record<string, nu
       index: game.index,
       phase: game.phase,
       ends: game.ends,
+      round: game.round,
       impostors: game.impostors,
       tasks: { done: work.filter((t) => t.done).length, total: work.length },
       sabotage:
         game.phase === "action" && game.sabotage
-          ? { ...game.sabotage, hands: agents.filter((a) => a.alive && a.holding && a.room === SPOTS.reactor).length }
+          ? { ...game.sabotage, hands: agents.filter((a) => a.alive && a.holding && a.zone === "reactor").length }
           : null,
       buttonAt: game.buttonAt,
       meeting: game.meeting && (game.phase === "meeting" || game.phase === "ejection") ? { ...game.meeting, voted: agents.filter((a) => a.vote !== null).map((a) => a.id) } : null,
@@ -711,7 +725,7 @@ export function viewOf(room: Room, now: number, seen: Readonly<Record<string, nu
   return { code: room.code, version: room.version, now, host: room.host, settings: room.settings, players, game: gameView };
 }
 
-/** What one player may know: who they are, where they are and what they can see from there. */
+/** What one player may know: who they are, and what's near enough to them to matter. */
 export interface Me {
   game: number;
   impostor: boolean;
@@ -719,14 +733,11 @@ export interface Me {
   mates: string[];
   alive: boolean;
   killer: string | null;
-  room: RoomId;
-  moveAt: number;
-  /** Who you can see in here. */
-  here: string[];
-  /** Other ghosts in here, if you're one. */
-  ghosts: string[];
-  bodies: string[];
-  /** Who's on the medbay scanner in front of you: only crew can be. */
+  /** Where the room thinks you are. */
+  zone: ZoneId;
+  /** Bodies near you, where they lie: or the ones on the cameras, if you're in security; or all of them, if you're a ghost. */
+  bodies: { victim: string; x: number; y: number }[];
+  /** Who's on the medbay scanner, if you're near enough to see it: only crew can be. */
   scanning: string[];
   dark: boolean;
   tasks: { id: string; done: boolean }[];
@@ -736,28 +747,26 @@ export interface Me {
   buttons: number;
   holding: boolean;
   vote: string | null;
-  seen: Note[];
   /** In admin: how many are in each room, bodies and all. */
-  table: Partial<Record<RoomId, number>> | null;
-  /** In security: who the cameras can see. */
-  cameras: { room: RoomId; players: string[]; bodies: string[] }[] | null;
+  table: Partial<Record<(typeof ROOM_IDS)[number], number>> | null;
+  /** For a ghost, everyone else who's dead: the only ones who can see you. */
+  dead: string[];
 }
 
 export function privateView(room: Room, player: string): Me | null {
   const game = room.game;
   const me = game?.agents.get(player);
   if (!game || !me) return null;
-  const agents = agentsOf(game).filter((a) => !a.left);
-  const others = agents.filter((a) => a.room === me.room && a.id !== me.id);
-  const dark = inTheDark(game, me);
   const playing = game.phase === "action";
-  const living = (where: RoomId) => agents.filter((a) => a.alive && a.room === where).map((a) => a.id);
-  const bodiesIn = (where: RoomId) => game.bodies.filter((b) => b.room === where).map((b) => b.victim);
+  const agents = agentsOf(game).filter((a) => !a.left);
+  const bodies = game.bodies.filter(
+    (b) => !me.alive || hops(b.zone, me.zone) <= 2 || (me.zone === SPOTS.cameras.zone && CAMERAS.some((camera) => inCamera(camera, b))),
+  );
   let table: Me["table"] = null;
-  if (playing && me.room === SPOTS.table) {
+  if (playing && me.zone === SPOTS.table.zone) {
     table = {};
     for (const id of ROOM_IDS) {
-      const count = living(id).length + bodiesIn(id).length;
+      const count = agents.filter((a) => a.alive && a.zone === id).length + game.bodies.filter((b) => b.zone === id).length;
       if (count > 0) table[id] = count;
     }
   }
@@ -767,21 +776,17 @@ export function privateView(room: Room, player: string): Me | null {
     mates: me.impostor ? agentsOf(game).filter((a) => a.impostor && a.id !== me.id).map((a) => a.id) : [],
     alive: me.alive,
     killer: me.killer,
-    room: me.room,
-    moveAt: me.moveAt,
-    here: playing && !dark ? others.filter((a) => a.alive).map((a) => a.id) : [],
-    ghosts: playing && !me.alive ? others.filter((a) => !a.alive).map((a) => a.id) : [],
-    bodies: playing ? bodiesIn(me.room) : [],
-    scanning: playing && !dark ? others.filter((a) => a.alive && a.scanning !== null).map((a) => a.id) : [],
-    dark,
+    zone: me.zone,
+    bodies: playing ? bodies.map((b) => ({ victim: b.victim, x: b.x, y: b.y })) : [],
+    scanning: playing && hops(me.zone, "medbay") <= 1 ? agents.filter((a) => a.alive && a.scanning !== null).map((a) => a.id) : [],
+    dark: inTheDark(game, me),
     tasks: me.tasks,
     killAt: me.impostor ? me.killAt : null,
     sabotageAt: me.impostor ? game.sabotageAt : null,
     buttons: me.buttons,
     holding: me.holding,
     vote: me.vote,
-    seen: me.seen,
     table,
-    cameras: playing && me.room === SPOTS.cameras ? CAMERAS.map((id) => ({ room: id, players: living(id), bodies: bodiesIn(id) })) : null,
+    dead: me.alive ? [] : agentsOf(game).filter((a) => !a.alive && !a.left && a.id !== me.id).map((a) => a.id),
   };
 }
