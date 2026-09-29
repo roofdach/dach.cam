@@ -18,6 +18,11 @@ export const games: Game[] = [
     href: "/phone",
   },
   {
+    title: "sus",
+    description: "an among us. do your tasks, find the impostor, vote them off; or be the impostor and don't get caught.",
+    href: "/sus",
+  },
+  {
     title: "hang",
     description: "a hangman. race friends to the same word, or take turns picking one to hang the rest.",
     href: "/hang",

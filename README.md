@@ -1,6 +1,6 @@
 # personal site
 
-one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a drawing game at `/draw`, a gartic phone at `/phone`, a hangman at `/hang`, a worldle at `/shape`, a geoguessr at `/geo` and a cookie clicker at `/cookie`.
+one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a drawing game at `/draw`, a gartic phone at `/phone`, an among us at `/sus`, a hangman at `/hang`, a worldle at `/shape`, a geoguessr at `/geo` and a cookie clicker at `/cookie`.
 
 ## running it
 
@@ -108,6 +108,27 @@ it costs much less to run than draw, since nothing is sent while people draw: a 
 
 `npm run check` covers the chains and who has which when, timing, skips and leavers, the reveal, thinning drawings, and the api end to end in memory and against a pretend upstash.
 
+## sus
+
+an among us, at `/sus`, for four to fifteen. everyone's a crewmate except one to three impostors, and only the impostors know who they are. the ship is fourteen rooms joined by corridors, laid out the way people who've played will expect; you tap a room next to yours to go there, and you only see who's in the room with you.
+
+- **crewmates** do tasks, each a little game in its own room: fix the wiring, swipe your card (not too fast, not too slow), start the reactor (repeat the lights), clear asteroids, prime shields, chart a course, and nine more. the medbay scan can be watched by anyone in medbay, and impostors can't do it, so it clears you. admin's table shows how many are in each room, and security's cameras watch four rooms.
+- **impostors** have fake tasks to be seen at, kill anyone in the room with them (not straight away, and not again for a while), use vents between some rooms, and sabotage: the lights, so the crew can't see who's with them, or the reactor, which melts down in 45 seconds unless two people hold its scanners at once. anyone else in the room sees a kill, or someone using a vent, unless the lights are out.
+- **meetings** are called by reporting a body or pressing the button in the cafeteria (once each). everyone who's died so far is shown, there's a chat, then a vote: most votes is ejected, a tie or a skip ejects nobody, and the ejection says whether they were an impostor (unless the host keeps it secret). the dead talk among themselves, and can still do their tasks.
+- **the crew win** by finishing every task or ejecting every impostor; **the impostors win** once there are as many of them as crew, or if the reactor melts down.
+
+the host picks up to one, two or three impostors (one for four to six players, two from seven, three from nine), 20, 30 or 45 seconds between kills, three, five or seven tasks each, and short, normal or long meetings. it uses the same redis database as the other rooms.
+
+### how it works
+
+- **why rooms rather than walking about:** every room game here polls about once a second, with no connection held open, which is what keeps them free to run on vercel. that's fine for stepping into the next room and seeing who's there, and hopeless for walking about in real time.
+- **the rules** are another replayed log, [`lib/sus/room.ts`](lib/sus/room.ts): moves, tasks, kills, reports, sabotage, votes. who's an impostor, and everyone's tasks, come from the room's secret salt. a task only counts if you were in its room long enough to have done it; a move only to a room next door, and not too soon after the last.
+- **your view is sealed.** nearly everything is secret from someone, but everyone gets the same copy of the room so the cdn can share it. so each player's own view (who they are, where they are, who's with them, what they saw) travels in it encrypted with a key only they're given, the way draw seals the chat of those who've guessed ([`lib/draw/secret.ts`](lib/draw/secret.ts)). everyone gets everyone's, and can only open theirs. each is padded to the same length so an impostor's can't be told by its size, and sealed afresh every time so nobody can tell whose changed when. the dead's chat is sealed the same way.
+
+what it costs to run: more than the others, since people move about all game. every step is a read and a write (about eight redis commands), and the room is polled about once a second, shared. a ten-minute game of eight is roughly 10,000 to 15,000 commands, so upstash's free 500,000 a month covers thirty to fifty games.
+
+`npm run check` covers the ship, the settings, who sees what, moving and vents, tasks and the scan, kills and witnesses, the lights and the reactor, meetings, ties and skips, every way to win, leaving, and the api end to end, sealed views and ghost chat included, in memory and against a pretend upstash.
+
 ## hang
 
 a hangman, at `/hang`. everyone in the room gets the same hidden word at the same moment, with its category as the clue, and guesses on a board of their own: tap letters or type them, and a right one shows wherever it comes while a wrong one draws another piece of your hangman. six wrong and you're hanged. you can have a go at the whole word whenever you like, but a wrong go costs a piece too. every letter you find is worth 10, and getting the word is worth 150 to 900 more, the sooner you do and the more of you is left. you can see everyone else's hangman being drawn as they go, and once you've got it (or been hanged) they fill the screen. when a word's over, everyone sees what everyone tried; at the end there are awards (quickest, sharpest, most hanged, cruellest hangman, the hardest word).
@@ -156,11 +177,13 @@ app/                  layout, page, global styles
 app/cookie/           the cookie clicker's page
 app/draw/             draw's menu, and /draw/CODE for rooms
 app/phone/            phone's menu, and /phone/CODE for rooms
+app/sus/              sus's menu, and /sus/CODE for rooms
 app/hang/             hang's menu, and /hang/CODE for rooms
 app/shape/            shape's menu and solo modes, and /shape/CODE for races
 app/geo/              geo's menu, and /geo/CODE for rooms
 app/api/draw/         draw's multiplayer api
 app/api/phone/        phone's multiplayer api
+app/api/sus/          sus's multiplayer api
 app/api/hang/         hang's multiplayer api
 app/api/shape/        shape's race api
 app/api/geo/          geo's multiplayer api
@@ -170,6 +193,7 @@ components/cookie/    the game's screen, its loop, saving and tabs
 components/draw/      draw's screens: menu, lobby, the board and its tools, chat
 components/game/      what the room games share: buttons, the server's clock, saving, the drawing board, room screens
 components/phone/     phone's screens: lobby, writing, drawing, describing, the reveal
+components/sus/       sus's screens: lobby, roles, the ship, the room you're in, the tasks, meetings, ejections, the end
 components/hang/      hang's screens: lobby, the gallows, the keyboard, watching, the reveal, the awards
 components/shape/     shape's screens: daily and practice, speed, quiz, the race
 components/geo/       geo's screens: menu, rounds, results, rooms, street view, maps
@@ -178,6 +202,7 @@ data/games.ts         the games
 lib/cookie/           the game itself: buildings, upgrades, achievements, the engine, saves
 lib/draw/             draw: the words, guess matching, drawing operations, the room rules, and the server side
 lib/phone/            phone: the chains, the room rules, and the server side
+lib/sus/              sus: the ship, the room rules, and the server side
 lib/hang/             hang: the words, the room rules, and the server side
 lib/shape/            shape: the countries, matching names, hints, the daily and quiz, the race
 lib/geo/              geo: maps, scoring, the place finder, the room rules, and the server side
@@ -191,6 +216,7 @@ scripts/check-draw.mts and for draw
 scripts/check-phone.mts and for phone
 scripts/check-shape.mts and for shape
 scripts/check-hang.mts and for hang
+scripts/check-sus.mts and for sus
 scripts/fake-upstash.mts a pretend upstash for the checks
 scripts/geo-data.mts  builds geo's towns and map sizes
 scripts/shape-data.mts builds shape's countries and copies the flags

@@ -42,6 +42,7 @@ export const KEYS = {
   phoneRoom: (code: string) => `phone:room:${code}`,
   shapeRoom: (code: string) => `shape:room:${code}`,
   hangRoom: (code: string) => `hang:room:${code}`,
+  susRoom: (code: string) => `sus:room:${code}`,
   shapeDaily: "shape:daily",
   shapePractice: "shape:practice",
   shapeStats: "shape:stats",
