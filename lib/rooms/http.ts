@@ -28,11 +28,11 @@ export function fresh(body: unknown, status = 200): Response {
 
 /**
  * Replies every player in a room gets the same copy of, which Vercel's CDN may
- * hand out for up to a second so a room costs about one function call a second
- * however many are polling. Browsers never keep them.
+ * hand out for up to a second (or `seconds`) so a room costs about one
+ * function call a second however many are polling. Browsers never keep them.
  */
-export function shared(body: unknown): Response {
-  return Response.json(body, { headers: { "Cache-Control": "no-store", "Vercel-CDN-Cache-Control": "max-age=1" } });
+export function shared(body: unknown, seconds = 1): Response {
+  return Response.json(body, { headers: { "Cache-Control": "no-store", "Vercel-CDN-Cache-Control": `max-age=${seconds}` } });
 }
 
 export function failure(error: unknown): Response {

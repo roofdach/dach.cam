@@ -11,7 +11,8 @@
  * work out everything else), `GAME:room:CODE:seen` (a hash of player id to
  * when they were last heard from, with the hash of their secret, so a sign of
  * life can be written without reading anything first and checked by whoever
- * reads it), and any side lists a game keeps, like a drawing's strokes.
+ * reads it), and any side lists or hashes a game keeps, like a drawing's
+ * strokes.
  */
 
 /** All a store needs to know about an event: what kind, and when. */
@@ -32,6 +33,8 @@ export interface StoredRoom<E extends StoredEvent> {
   seen: Record<string, { at: number; tok: string }>;
   /** Side lists asked for along with the room, by name. */
   lists: Record<string, string[]>;
+  /** Side hashes asked for along with the room, by name. */
+  hashes: Record<string, Record<string, string>>;
 }
 
 /** A side list to read along with a room: from an index on, or the last few when `from` is negative. */
@@ -43,8 +46,10 @@ export interface ListRead {
 export interface RoomStore<E extends StoredEvent> {
   /** Claims a code and writes the first events; false if the code is taken. */
   create(code: string, events: E[], seen: Seen, ttl: number): Promise<boolean>;
-  /** The whole log, and any side lists asked for, in one round trip; null when there's no such room. */
-  read(code: string, lists?: ListRead[]): Promise<StoredRoom<E> | null>;
+  /** The whole log, and any side lists and hashes asked for, in one round trip; null when there's no such room. */
+  read(code: string, lists?: ListRead[], hashes?: string[]): Promise<StoredRoom<E> | null>;
+  /** The first event in the log, which says what the room is, without reading the rest; null when there's no such room. */
+  head(code: string): Promise<E | null>;
   /** Adds events to the end of the log and returns how long the log now is. */
   append(code: string, events: E[], ttl: number, seen?: Seen): Promise<number>;
   /** Notes that a player is still around: a single write, since this happens every twenty seconds per player. */
@@ -53,6 +58,8 @@ export interface RoomStore<E extends StoredEvent> {
   push(code: string, list: string, items: string[], ttl: number): Promise<number>;
   /** A side list from an index on, or the last few when `from` is negative. */
   slice(code: string, list: string, from: number): Promise<string[]>;
+  /** Sets one field of one of the room's side hashes and returns the whole hash as it then is, in one round trip. */
+  swap(code: string, hash: string, field: string, value: string, ttl: number): Promise<Record<string, string>>;
 }
 
 const keysFor = (namespace: string, code: string) => ({
@@ -88,9 +95,42 @@ function unpackSeen(value: unknown): { at: number; tok: string } | null {
 
 const strings = (raw: unknown): string[] => (Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : []);
 
+/** HGETALL's flat [field, value, field, value…] as an object. */
+export function pairs(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!Array.isArray(raw)) return out;
+  for (let i = 0; i + 1 < raw.length; i += 2) if (typeof raw[i] === "string" && typeof raw[i + 1] === "string") out[raw[i]] = raw[i + 1];
+  return out;
+}
+
 /* ------------------------------------------------------------- upstash */
 
-type Command = (string | number)[];
+export type Command = (string | number)[];
+
+/** Runs commands against Upstash in one round trip, in order. Not a transaction: each is atomic on its own. */
+export async function upstashPipeline(url: string, token: string, commands: Command[], fetcher: typeof fetch = fetch): Promise<unknown[]> {
+  const response = await fetcher(`${url.replace(/\/+$/, "")}/pipeline`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(commands.map((command) => command.map(String))),
+    cache: "no-store",
+  });
+  const text = await response.text();
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new Error(`Upstash replied ${response.status} with something that isn't JSON`);
+  }
+  if (!response.ok || !Array.isArray(body)) {
+    const message = (body as { error?: unknown } | null)?.error;
+    throw new Error(`Upstash replied ${response.status}: ${typeof message === "string" ? message : "unexpected reply"}`);
+  }
+  return body.map((entry: { result?: unknown; error?: unknown }) => {
+    if (entry && typeof entry.error === "string") throw new Error(`Upstash: ${entry.error}`);
+    return entry?.result ?? null;
+  });
+}
 
 export class UpstashStore<E extends StoredEvent> implements RoomStore<E> {
   private readonly url: string;
@@ -105,29 +145,8 @@ export class UpstashStore<E extends StoredEvent> implements RoomStore<E> {
     this.fetcher = fetcher;
   }
 
-  /** Runs commands in one round trip, in order. Not a transaction: each is atomic on its own. */
-  private async pipeline(commands: Command[]): Promise<unknown[]> {
-    const response = await this.fetcher(`${this.url}/pipeline`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(commands.map((command) => command.map(String))),
-      cache: "no-store",
-    });
-    const text = await response.text();
-    let body: unknown;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      throw new Error(`Upstash replied ${response.status} with something that isn't JSON`);
-    }
-    if (!response.ok || !Array.isArray(body)) {
-      const message = (body as { error?: unknown } | null)?.error;
-      throw new Error(`Upstash replied ${response.status}: ${typeof message === "string" ? message : "unexpected reply"}`);
-    }
-    return body.map((entry: { result?: unknown; error?: unknown }) => {
-      if (entry && typeof entry.error === "string") throw new Error(`Upstash: ${entry.error}`);
-      return entry?.result ?? null;
-    });
+  private pipeline(commands: Command[]): Promise<unknown[]> {
+    return upstashPipeline(this.url, this.token, commands, this.fetcher);
   }
 
   async create(code: string, events: E[], seen: Seen, ttl: number) {
@@ -144,23 +163,43 @@ export class UpstashStore<E extends StoredEvent> implements RoomStore<E> {
     return true;
   }
 
-  async read(code: string, lists: ListRead[] = []): Promise<StoredRoom<E> | null> {
+  async read(code: string, lists: ListRead[] = [], hashes: string[] = []): Promise<StoredRoom<E> | null> {
     const k = keysFor(this.namespace, code);
-    const [log, seenRaw, ...listsRaw] = await this.pipeline([
+    const [log, seenRaw, ...rest] = await this.pipeline([
       ["LRANGE", k.log, 0, -1],
       ["HGETALL", k.seen],
       ...lists.map(({ name, from }): Command => ["LRANGE", k.list(name), from, -1]),
+      ...hashes.map((name): Command => ["HGETALL", k.list(name)]),
     ]);
     const events = parseEvents<E>(log);
     if (events.length === 0) return null;
     const seen: StoredRoom<E>["seen"] = {};
-    if (Array.isArray(seenRaw)) {
-      for (let i = 0; i + 1 < seenRaw.length; i += 2) {
-        const entry = unpackSeen(seenRaw[i + 1]);
-        if (typeof seenRaw[i] === "string" && entry) seen[seenRaw[i] as string] = entry;
-      }
+    for (const [player, value] of Object.entries(pairs(seenRaw))) {
+      const entry = unpackSeen(value);
+      if (entry) seen[player] = entry;
     }
-    return { events, seen, lists: Object.fromEntries(lists.map(({ name }, i) => [name, strings(listsRaw[i])])) };
+    return {
+      events,
+      seen,
+      lists: Object.fromEntries(lists.map(({ name }, i) => [name, strings(rest[i])])),
+      hashes: Object.fromEntries(hashes.map((name, i) => [name, pairs(rest[lists.length + i])])),
+    };
+  }
+
+  async head(code: string): Promise<E | null> {
+    const [first] = await this.pipeline([["LINDEX", keysFor(this.namespace, code).log, 0]]);
+    return parseEvents<E>([first])[0] ?? null;
+  }
+
+  async swap(code: string, hash: string, field: string, value: string, ttl: number) {
+    const key = keysFor(this.namespace, code).list(hash);
+    const [added, all] = await this.pipeline([
+      ["HSET", key, field, value],
+      ["HGETALL", key],
+    ]);
+    // A new field gets the hash's expiry put back, rather than every write: where people are is written several times a second.
+    if (Number(added) > 0) await this.pipeline([["EXPIRE", key, ttl]]);
+    return pairs(all);
   }
 
   async append(code: string, events: E[], ttl: number, seen?: Seen) {
@@ -207,6 +246,7 @@ interface MemoryRoom {
   log: string[];
   seen: Map<string, string>;
   lists: Map<string, string[]>;
+  hashes: Map<string, Map<string, string>>;
   expires: number;
 }
 
@@ -234,12 +274,13 @@ export class MemoryStore<E extends StoredEvent> implements RoomStore<E> {
       log: events.map((e) => JSON.stringify(e)),
       seen: new Map([[seen.player, packSeen(seen)]]),
       lists: new Map(),
+      hashes: new Map(),
       expires: this.clock() + ttl * 1000,
     });
     return true;
   }
 
-  async read(code: string, lists: ListRead[] = []): Promise<StoredRoom<E> | null> {
+  async read(code: string, lists: ListRead[] = [], hashes: string[] = []): Promise<StoredRoom<E> | null> {
     const room = this.live(code);
     if (!room) return null;
     const events = parseEvents<E>(room.log);
@@ -249,7 +290,26 @@ export class MemoryStore<E extends StoredEvent> implements RoomStore<E> {
       const entry = unpackSeen(value);
       if (entry) seen[player] = entry;
     }
-    return { events, seen, lists: Object.fromEntries(lists.map(({ name, from }) => [name, this.range(room, name, from)])) };
+    return {
+      events,
+      seen,
+      lists: Object.fromEntries(lists.map(({ name, from }) => [name, this.range(room, name, from)])),
+      hashes: Object.fromEntries(hashes.map((name) => [name, Object.fromEntries(room.hashes.get(name) ?? [])])),
+    };
+  }
+
+  async head(code: string): Promise<E | null> {
+    const room = this.live(code);
+    return room ? (parseEvents<E>(room.log.slice(0, 1))[0] ?? null) : null;
+  }
+
+  async swap(code: string, hash: string, field: string, value: string, ttl: number) {
+    const room = this.live(code) ?? this.orphan(code);
+    const fields = room.hashes.get(hash) ?? new Map<string, string>();
+    fields.set(field, value);
+    room.hashes.set(hash, fields);
+    room.expires = Math.max(room.expires, this.clock() + ttl * 1000);
+    return Object.fromEntries(fields);
   }
 
   /** LRANGE from..-1: from an index on, or the last few for a negative start. */
@@ -260,7 +320,7 @@ export class MemoryStore<E extends StoredEvent> implements RoomStore<E> {
 
   private orphan(code: string): MemoryRoom {
     // Like writing to a key that has expired: data with no room around it, which reads as no room.
-    const room: MemoryRoom = { log: [], seen: new Map(), lists: new Map(), expires: 0 };
+    const room: MemoryRoom = { log: [], seen: new Map(), lists: new Map(), hashes: new Map(), expires: 0 };
     this.rooms.set(code, room);
     return room;
   }

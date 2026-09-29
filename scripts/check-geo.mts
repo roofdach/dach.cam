@@ -726,6 +726,8 @@ await check("a write that races another is read back rather than guessed at", as
     touch: inner.touch.bind(inner),
     push: inner.push.bind(inner),
     slice: inner.slice.bind(inner),
+    head: inner.head.bind(inner),
+    swap: inner.swap.bind(inner),
     async append(code, events, ttl, seen) {
       await inner.append(code, [{ k: "join", t: clock.now, p: "sneaky", name: "sneaky", tok: "x" }], ttl);
       return inner.append(code, events, ttl, seen);

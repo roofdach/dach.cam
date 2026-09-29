@@ -40,11 +40,30 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 
   --animate-fade-in: fade-in 450ms cubic-bezier(0.25, 1, 0.5, 1);
+  --animate-pop: pop 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  --animate-draw-in: draw-in 420ms cubic-bezier(0.65, 0, 0.35, 1) both;
 }
 
 @keyframes fade-in {
   from {
     opacity: 0;
+  }
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+
+/* For SVG lines drawn with pathLength="1": they draw themselves in. */
+@keyframes draw-in {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
   }
 }
 

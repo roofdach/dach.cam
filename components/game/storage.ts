@@ -41,6 +41,13 @@ export const KEYS = {
   drawRoom: (code: string) => `draw:room:${code}`,
   phoneRoom: (code: string) => `phone:room:${code}`,
   shapeRoom: (code: string) => `shape:room:${code}`,
+  hangRoom: (code: string) => `hang:room:${code}`,
+  susRoom: (code: string) => `sus:room:${code}`,
+  arcadeRoom: (game: string, code: string) => `${game}:room:${code}`,
+  /** The secret that stands for you on the arcade's high score boards. */
+  arcadePlayer: "arcade:player",
+  /** Your best at each arcade game, on this device. */
+  arcadeBest: (game: string) => `${game}:best`,
   shapeDaily: "shape:daily",
   shapePractice: "shape:practice",
   shapeStats: "shape:stats",

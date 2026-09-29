@@ -1,6 +1,6 @@
 # personal site
 
-one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a drawing game at `/draw`, a gartic phone at `/phone`, a worldle at `/shape`, a geoguessr at `/geo` and a cookie clicker at `/cookie`.
+one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a drawing game at `/draw`, a gartic phone at `/phone`, an among us at `/sus`, a hangman at `/hang`, a flappy bird at `/flap`, a snake at `/snake`, a worldle at `/shape`, a geoguessr at `/geo` and a cookie clicker at `/cookie`.
 
 ## running it
 
@@ -108,6 +108,64 @@ it costs much less to run than draw, since nothing is sent while people draw: a 
 
 `npm run check` covers the chains and who has which when, timing, skips and leavers, the reveal, thinning drawings, and the api end to end in memory and against a pretend upstash.
 
+## sus
+
+an among us, at `/sus`, for four to fifteen. everyone's a crewmate except one to three impostors, and only the impostors know who they are. the ship is fourteen rooms joined by corridors, laid out the way people who've played will expect, and you walk about it: WASD or the arrow keys, or on a phone, put a thumb down anywhere and drag. walls stop you, and you only see what's in your line of sight, a circle round you cut off by the walls; everything else is dark.
+
+- **crewmates** do tasks at consoles round the ship (yellow arrows at the edge of the screen point the way), each a little game: fix the wiring, swipe your card (not too fast, not too slow), start the reactor (repeat the lights), clear asteroids, prime shields, chart a course, and nine more. whoever's on the medbay scanner glows green for anyone nearby, and impostors can't get on it, so it clears you. admin's table shows how many are in each room, and security's cameras show four corridors live. E uses whatever you're next to, R reports a body, M is the map.
+- **impostors** have fake tasks to be seen at, kill anyone within reach (Q; not straight away, and not again for a while), hop between vents (V) and sabotage: the lights, so the crew can hardly see past their nose, or the reactor, which melts down in 45 seconds unless two people hold its scanners at once. a kill leaves a body where it happened. anyone who sees someone jump into or out of a vent, or finds a body with someone standing over it, has it written down for the next meeting.
+- **meetings** are called by reporting a body or pressing the button on the cafeteria table (once each). everyone who's died so far is shown, there's a chat, then a vote: most votes is ejected, a tie or a skip ejects nobody, and the ejection says whether they were an impostor (unless the host keeps it secret). then everyone's back round the table. the dead drift through walls as ghosts that only other ghosts see, talk among themselves, and can still do their tasks.
+- **the crew win** by finishing every task or ejecting every impostor; **the impostors win** once there are as many of them as crew, or if the reactor melts down.
+
+the host picks up to one, two or three impostors (one for four to six players, two from seven, three from nine), 20, 30 or 45 seconds between kills, three, five or seven tasks each, and short, normal or long meetings. it uses the same redis database as the other rooms.
+
+### how it works
+
+- **walking** happens in your browser: the ship is a grid of floor tiles, and you slide along walls rather than stopping dead ([`lib/sus/space.ts`](lib/sus/space.ts)). what you can see is worked out by casting rays at the corners of the walls near you. it's all drawn on a canvas, crewmates and all ([`components/sus/draw.ts`](components/sus/draw.ts)).
+- **where everyone is** goes through the server, like everything else here, with no connection held open: several times a second while you walk (and about once a second while you stand still), your browser says where you are and hears back where everyone else is, in one small request. those skip the room's log: each is signed with your seat's key, so the server only has to check the signature, then write your position into one redis hash and read the whole hash back. everyone else is drawn a moment behind where they said they were, gliding between one word and the next, so they move smoothly however bumpy the network ([`components/sus/engine.ts`](components/sus/engine.ts)). when something happens everyone should see at once, a kill, a meeting or an alarm, the room's version rides along in those replies, and browsers fetch the room straight away rather than at their next poll.
+- **the rules** are another replayed log, [`lib/sus/room.ts`](lib/sus/room.ts): tasks, kills, reports, sabotage, votes. who's an impostor, and everyone's tasks, come from the room's secret salt. the room doesn't trust anyone's position, only which zone of the ship they're in (a room, or a stretch of corridor), which your browser tells it whenever you cross into another. a zone has to be next door, or near enough, to the last; a task only counts if you've been in its room long enough to have done it; a kill needs the two of you in the same or neighbouring zones, and near enough to each other going by the positions you both last sent.
+- **your view is sealed.** nearly everything is secret from someone, but everyone gets the same copy of the room so the cdn can share it. so each player's own view (who they are, which bodies are near enough to see, what admin's table says) travels in it encrypted with a key only they're given, the way draw seals the chat of those who've guessed ([`lib/draw/secret.ts`](lib/draw/secret.ts)). everyone gets everyone's, and can only open theirs. each is padded to the same length so an impostor's can't be told by its size, and sealed afresh every time so nobody can tell whose changed when. the dead's chat is sealed the same way. positions aren't sealed, though: everyone's browser hears where everyone is and only draws what you can see, so someone determined to cheat could dig everyone's whereabouts out of their browser's network tab. who's an impostor, and who's dead, stay sealed.
+
+what it costs to run: a good deal more than the others, since everyone says where they are several times a second. each of those is one function call and two redis commands, and each zone crossed is a read and a write of the room (about nine commands). a ten-minute game of eight is roughly 35,000 to 45,000 redis commands and 15,000 function calls, so upstash's free 500,000 a month covers about a dozen games; past that, upstash's pay-as-you-go plan charges 20 cents per 100,000 commands, so under 10 cents a game. keep an eye on vercel's included function calls too if it gets a lot of use.
+
+`npm run check` covers the ship and its walls, walking and sliding and line of sight, the settings, who sees what, zones and vents, tasks and the scan, kills and bodies, the lights and the reactor, meetings, ties and skips, every way to win, leaving, and the api end to end (sealed views, ghost chat, signed positions, a kill too far away turned down) in memory and against a pretend upstash.
+
+## hang
+
+a hangman, at `/hang`. everyone in the room gets the same hidden word at the same moment, with its category as the clue, and guesses on a board of their own: tap letters or type them, and a right one shows wherever it comes while a wrong one draws another piece of your hangman. six wrong and you're hanged. you can have a go at the whole word whenever you like, but a wrong go costs a piece too. every letter you find is worth 10, and getting the word is worth 150 to 900 more, the sooner you do and the more of you is left. you can see everyone else's hangman being drawn as they go, and once you've got it (or been hanged) they fill the screen. when a word's over, everyone sees what everyone tried; at the end there are awards (quickest, sharpest, most hanged, cruellest hangman, the hardest word).
+
+two ways to play, picked by the host:
+
+- **race**: the game picks 5, 10 or 15 words from about 530 in 14 categories.
+- **take turns**: each of you in turn is the hangman, picks one of three words for everyone else, watches, and scores for every piece they lose (100 a piece, averaged over the guessers). once, twice or three times round.
+
+the host also picks 30, 60 or 90 seconds a word, and can add words of their own, as in draw: a third of a race is theirs, or one of the three on offer taking turns, or only theirs. up to twenty players, joining the same way as the others: a four-letter code at `/hang`. it uses the same redis database as the other rooms. every guess is a read and a write, about seven commands, so a game of five players and ten words is roughly 5,000 to 6,000 commands with the polling, and upstash's free 500,000 a month covers eighty or more games.
+
+### how it works
+
+- **the rules** are another replayed log, [`lib/hang/room.ts`](lib/hang/room.ts): joins, starts, picks and guesses, with the server's clock deciding when a pick times out (the first word, then) and when a word ends: when everyone still here has it or is hanged, or when time's up. the words come from the room's secret salt, so nothing in anyone's browser can tell what's coming.
+- **your board is yours.** everyone gets the same copy of the room, so it only says how far along each of you is (letters found, pieces lost), never which letters, until the word's over. your own board, with the letters, comes back only to you, as does the word once you've got it, the three on offer when it's your pick, and the host's own words.
+- **guesses go the moment you make them**, several at once if you're quick; each shows as pending until the room has it, and replies that come back out of order can't undo each other.
+
+`npm run check` covers the words, what counts as a letter and a guess, the scoring, a race and taking turns from the rules down to the api, in memory and against a pretend upstash.
+
+## flap and snake
+
+a flappy bird at `/flap` and a snake at `/snake`, the arcade games. both start the moment the page loads: tap, click or press space to flap; arrow keys, WASD, a swipe or the pad on a phone to steer the snake, which gets longer and quicker with every apple, and every fifth apple brings a golden one worth three for a little while. each has high scores for today and all time, and your best is kept on your device whether or not the boards can be reached.
+
+you can also race a friend (or up to eight): make a room, send the code, and everyone plays the same pipes or the same board at the same moment. in flap the others fly beside you as see-through birds; in snake their boards are small beside yours. the best score takes the round, the longer run if it's level, and the host picks first to one, three or five rounds for the match.
+
+### how it works
+
+- **every run can be played again.** both games move in fixed steps (sixty ticks a second for the bird, a step per move for the snake, quicker as it grows), from a seed, with nothing in the sums a browser could round differently ([`lib/flap/game.ts`](lib/flap/game.ts), [`lib/snake/game.ts`](lib/snake/game.ts)). so a run is just its seed and its moves: which ticks you flapped on, which steps you turned before.
+- **the high scores believe nothing they're told.** before a run your browser asks for a ticket: a seed, when it was handed out, and a signature over both, so nobody can pick an easy course or claim to have started earlier. after, it sends the ticket and the moves; the server plays the run back, and only what it really comes to goes on the board, and only if it could have been played in the time since the ticket ([`lib/arcade/server/scores.ts`](lib/arcade/server/scores.ts)). tickets are signed with `ARCADE_SECRET` if you set one, and otherwise with the database's token, which only the server has. you're a random secret your browser keeps, and the boards only ever see a hash of it, so nobody can post as you. a bot that really plays well could still get on; there's no stopping that.
+- **the boards** are sorted sets in the same redis as the rooms, one line per player keeping their best: all time (the top 2,000 are kept), and today by greenwich time, which lets itself go after a few days ([`lib/arcade/scores.ts`](lib/arcade/scores.ts)).
+- **a race** is another replayed log ([`lib/arcade/room.ts`](lib/arcade/room.ts)). each round's seed comes from the room's secret salt, and everyone starts at the same moment by the server's clock. when you're out, your moves go to the server, which plays them back, checks they fit in the time the round's been going, and keeps the score. while you play, where you've got to goes out a few times a second, signed with your seat's key the same way sus's positions are, so it needn't read the room ([`lib/rooms/seats.ts`](lib/rooms/seats.ts)).
+
+what it costs to run: a solo run is three requests (a ticket, the run, and the boards, which the cdn shares for ten seconds) and about fifteen redis commands, so upstash's free 500,000 a month covers tens of thousands of runs. a race is more, since where everyone's got to goes several times a second: roughly 1,500 to 2,000 commands for a one-minute round between two.
+
+`npm run check` covers the courses and boards, that both games play back to the letter and can be played well (by a simple bot), what a run's moves come to and how quickly they could have been played, the boards in memory and against a pretend upstash, what the boards turn away, and a race from its rules down to the api.
+
 ## shape
 
 a worldle, at `/shape`. you get a country's outline and guess which one it is; every wrong guess says how far off you are and which way. five ways to play:
@@ -137,10 +195,18 @@ app/                  layout, page, global styles
 app/cookie/           the cookie clicker's page
 app/draw/             draw's menu, and /draw/CODE for rooms
 app/phone/            phone's menu, and /phone/CODE for rooms
+app/sus/              sus's menu, and /sus/CODE for rooms
+app/hang/             hang's menu, and /hang/CODE for rooms
+app/flap/             flap's menu, which is also the game, and /flap/CODE for races
+app/snake/            snake's the same
 app/shape/            shape's menu and solo modes, and /shape/CODE for races
 app/geo/              geo's menu, and /geo/CODE for rooms
 app/api/draw/         draw's multiplayer api
 app/api/phone/        phone's multiplayer api
+app/api/sus/          sus's multiplayer api
+app/api/hang/         hang's multiplayer api
+app/api/flap/         flap's high scores and races
+app/api/snake/        snake's high scores and races
 app/api/shape/        shape's race api
 app/api/geo/          geo's multiplayer api
 app/og/               the link preview image
@@ -149,6 +215,11 @@ components/cookie/    the game's screen, its loop, saving and tabs
 components/draw/      draw's screens: menu, lobby, the board and its tools, chat
 components/game/      what the room games share: buttons, the server's clock, saving, the drawing board, room screens
 components/phone/     phone's screens: lobby, writing, drawing, describing, the reveal
+components/sus/       sus's screens (lobby, roles, the ship on a canvas, the tasks, meetings, ejections, the end) and the walking
+components/hang/      hang's screens: lobby, the gallows, the keyboard, watching, the reveal, the awards
+components/arcade/    what flap and snake share: the high scores, playing alone, the race screens
+components/flap/      flap's canvas, drawing, the race
+components/snake/     snake's canvas, drawing, the race
 components/shape/     shape's screens: daily and practice, speed, quiz, the race
 components/geo/       geo's screens: menu, rounds, results, rooms, street view, maps
 config/site.ts        everything personal
@@ -156,9 +227,14 @@ data/games.ts         the games
 lib/cookie/           the game itself: buildings, upgrades, achievements, the engine, saves
 lib/draw/             draw: the words, guess matching, drawing operations, the room rules, and the server side
 lib/phone/            phone: the chains, the room rules, and the server side
+lib/sus/              sus: the ship, walking and seeing, the room rules, and the server side
+lib/hang/             hang: the words, the room rules, and the server side
+lib/flap/             the flappy bird, as sums
+lib/snake/            the snake, as sums
+lib/arcade/           playing runs back, the high scores, the race rules, and the server side
 lib/shape/            shape: the countries, matching names, hints, the daily and quiz, the race
 lib/geo/              geo: maps, scoring, the place finder, the room rules, and the server side
-lib/rooms/            what rooms share: codes, where they're stored, and replies
+lib/rooms/            what rooms share: codes, where they're stored, seat keys, and replies
 lib/lanyard/          client, presence logic, types, hook
 lib/origin.ts         which domain a request came in on
 lib/random.ts         seeded and secure random numbers
@@ -167,6 +243,9 @@ scripts/check-geo.mts the same for geo
 scripts/check-draw.mts and for draw
 scripts/check-phone.mts and for phone
 scripts/check-shape.mts and for shape
+scripts/check-hang.mts and for hang
+scripts/check-sus.mts and for sus
+scripts/check-arcade.mts and for flap and snake
 scripts/fake-upstash.mts a pretend upstash for the checks
 scripts/geo-data.mts  builds geo's towns and map sizes
 scripts/shape-data.mts builds shape's countries and copies the flags

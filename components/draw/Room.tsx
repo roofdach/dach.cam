@@ -6,6 +6,7 @@ import { unseal } from "@/lib/draw/secret";
 import { useServerNow } from "@/components/game/clock";
 import { Connecting, Crumbs, ErrorLine, JoinForm, Leave, RoomGone, Shell, useAutoJoin, type GameName } from "@/components/game/room-ui";
 import { Button, Choice, Spinner, ordinal, plural } from "@/components/game/ui";
+import { WordsEditor } from "@/components/game/WordsEditor";
 import { Board } from "./Board";
 import { useDrawRoom, type DrawClient, type LocalLine, type Snapshot, type View } from "./room-client";
 
@@ -46,13 +47,6 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 function Dot({ color }: { color: string }) {
   return <span aria-hidden className="size-2.5 shrink-0 rounded-full" style={{ background: color }} />;
 }
-
-/** Words typed with commas or on lines of their own. */
-const splitWords = (text: string) =>
-  text
-    .split(/[,\n]/)
-    .map((w) => w.trim())
-    .filter(Boolean);
 
 function Lobby({ view, me, snapshot, client }: { view: View; me: string; snapshot: Snapshot; client: DrawClient }) {
   const host = view.host === me;
@@ -147,7 +141,7 @@ function Lobby({ view, me, snapshot, client }: { view: View; me: string; snapsho
             ))}
           </Row>
           {host ? (
-            <WordsEditor words={settings.words} only={settings.only} disabled={!editable} onChange={(patch) => void change(patch)} />
+            <WordsEditor words={settings.words} only={settings.only} max={MAX_CUSTOM_WORDS} disabled={!editable} onChange={(patch) => void change(patch)} />
           ) : (
             view.settings.words > 0 && (
               <p className="text-[13px] text-muted">
@@ -185,62 +179,6 @@ function Lobby({ view, me, snapshot, client }: { view: View; me: string; snapsho
         </p>
       </section>
     </Shell>
-  );
-}
-
-function WordsEditor({
-  words,
-  only,
-  disabled,
-  onChange,
-}: {
-  words: string[];
-  only: boolean;
-  disabled: boolean;
-  onChange: (patch: Partial<Settings>) => void;
-}) {
-  const [text, setText] = useState<string | null>(null);
-  const shown = text ?? words.join(", ");
-  const typed = splitWords(shown);
-  const save = () => {
-    if (text === null) return;
-    const list = splitWords(text).slice(0, MAX_CUSTOM_WORDS);
-    setText(null);
-    if (list.join("\n") !== words.join("\n")) onChange({ words: list, only: only && list.length >= 3 });
-  };
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor="words" className="text-[12.5px] text-muted">
-        your own words <span className="text-faint">(optional; commas between them)</span>
-      </label>
-      <textarea
-        id="words"
-        value={shown}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={save}
-        disabled={disabled}
-        rows={3}
-        maxLength={8000}
-        placeholder="our teacher, the school bus, pizza friday"
-        className="rounded-lg border border-faint bg-paper px-3 py-2 text-[16px] leading-snug outline-none placeholder:text-faint focus:border-ink disabled:opacity-60 sm:text-[14px]"
-      />
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] text-muted">
-        <span>
-          {plural(typed.length, "word")}
-          {typed.length > MAX_CUSTOM_WORDS && `; only the first ${MAX_CUSTOM_WORDS} count`}
-        </span>
-        <label className="flex items-center gap-1.5">
-          <input
-            type="checkbox"
-            checked={only}
-            disabled={disabled || words.length < 3 || text !== null}
-            onChange={(e) => onChange({ only: e.target.checked })}
-            className="accent-[var(--ink)]"
-          />
-          only use these {words.length < 3 && "(needs 3 or more)"}
-        </label>
-      </div>
-    </div>
   );
 }
 
