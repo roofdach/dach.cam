@@ -1,6 +1,6 @@
 # personal site
 
-one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a drawing game at `/draw`, a gartic phone at `/phone`, a worldle at `/shape`, a geoguessr at `/geo` and a cookie clicker at `/cookie`.
+one page: a short introduction, a sentence about what i'm doing right now (read live from discord), a list of games, and a few links. the games are a drawing game at `/draw`, a gartic phone at `/phone`, a hangman at `/hang`, a worldle at `/shape`, a geoguessr at `/geo` and a cookie clicker at `/cookie`.
 
 ## running it
 
@@ -108,6 +108,25 @@ it costs much less to run than draw, since nothing is sent while people draw: a 
 
 `npm run check` covers the chains and who has which when, timing, skips and leavers, the reveal, thinning drawings, and the api end to end in memory and against a pretend upstash.
 
+## hang
+
+a hangman, at `/hang`. everyone in the room gets the same hidden word at the same moment, with its category as the clue, and guesses on a board of their own: tap letters or type them, and a right one shows wherever it comes while a wrong one draws another piece of your hangman. six wrong and you're hanged. you can have a go at the whole word whenever you like, but a wrong go costs a piece too. every letter you find is worth 10, and getting the word is worth 150 to 900 more, the sooner you do and the more of you is left. you can see everyone else's hangman being drawn as they go, and once you've got it (or been hanged) they fill the screen. when a word's over, everyone sees what everyone tried; at the end there are awards (quickest, sharpest, most hanged, cruellest hangman, the hardest word).
+
+two ways to play, picked by the host:
+
+- **race**: the game picks 5, 10 or 15 words from about 530 in 14 categories.
+- **take turns**: each of you in turn is the hangman, picks one of three words for everyone else, watches, and scores for every piece they lose (100 a piece, averaged over the guessers). once, twice or three times round.
+
+the host also picks 30, 60 or 90 seconds a word, and can add words of their own, as in draw: a third of a race is theirs, or one of the three on offer taking turns, or only theirs. up to twenty players, joining the same way as the others: a four-letter code at `/hang`. it uses the same redis database as the other rooms. every guess is a read and a write, about seven commands, so a game of five players and ten words is roughly 5,000 to 6,000 commands with the polling, and upstash's free 500,000 a month covers eighty or more games.
+
+### how it works
+
+- **the rules** are another replayed log, [`lib/hang/room.ts`](lib/hang/room.ts): joins, starts, picks and guesses, with the server's clock deciding when a pick times out (the first word, then) and when a word ends: when everyone still here has it or is hanged, or when time's up. the words come from the room's secret salt, so nothing in anyone's browser can tell what's coming.
+- **your board is yours.** everyone gets the same copy of the room, so it only says how far along each of you is (letters found, pieces lost), never which letters, until the word's over. your own board, with the letters, comes back only to you, as does the word once you've got it, the three on offer when it's your pick, and the host's own words.
+- **guesses go the moment you make them**, several at once if you're quick; each shows as pending until the room has it, and replies that come back out of order can't undo each other.
+
+`npm run check` covers the words, what counts as a letter and a guess, the scoring, a race and taking turns from the rules down to the api, in memory and against a pretend upstash.
+
 ## shape
 
 a worldle, at `/shape`. you get a country's outline and guess which one it is; every wrong guess says how far off you are and which way. five ways to play:
@@ -137,10 +156,12 @@ app/                  layout, page, global styles
 app/cookie/           the cookie clicker's page
 app/draw/             draw's menu, and /draw/CODE for rooms
 app/phone/            phone's menu, and /phone/CODE for rooms
+app/hang/             hang's menu, and /hang/CODE for rooms
 app/shape/            shape's menu and solo modes, and /shape/CODE for races
 app/geo/              geo's menu, and /geo/CODE for rooms
 app/api/draw/         draw's multiplayer api
 app/api/phone/        phone's multiplayer api
+app/api/hang/         hang's multiplayer api
 app/api/shape/        shape's race api
 app/api/geo/          geo's multiplayer api
 app/og/               the link preview image
@@ -149,6 +170,7 @@ components/cookie/    the game's screen, its loop, saving and tabs
 components/draw/      draw's screens: menu, lobby, the board and its tools, chat
 components/game/      what the room games share: buttons, the server's clock, saving, the drawing board, room screens
 components/phone/     phone's screens: lobby, writing, drawing, describing, the reveal
+components/hang/      hang's screens: lobby, the gallows, the keyboard, watching, the reveal, the awards
 components/shape/     shape's screens: daily and practice, speed, quiz, the race
 components/geo/       geo's screens: menu, rounds, results, rooms, street view, maps
 config/site.ts        everything personal
@@ -156,6 +178,7 @@ data/games.ts         the games
 lib/cookie/           the game itself: buildings, upgrades, achievements, the engine, saves
 lib/draw/             draw: the words, guess matching, drawing operations, the room rules, and the server side
 lib/phone/            phone: the chains, the room rules, and the server side
+lib/hang/             hang: the words, the room rules, and the server side
 lib/shape/            shape: the countries, matching names, hints, the daily and quiz, the race
 lib/geo/              geo: maps, scoring, the place finder, the room rules, and the server side
 lib/rooms/            what rooms share: codes, where they're stored, and replies
@@ -167,6 +190,7 @@ scripts/check-geo.mts the same for geo
 scripts/check-draw.mts and for draw
 scripts/check-phone.mts and for phone
 scripts/check-shape.mts and for shape
+scripts/check-hang.mts and for hang
 scripts/fake-upstash.mts a pretend upstash for the checks
 scripts/geo-data.mts  builds geo's towns and map sizes
 scripts/shape-data.mts builds shape's countries and copies the flags
