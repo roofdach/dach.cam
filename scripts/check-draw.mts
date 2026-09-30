@@ -5,8 +5,9 @@
  */
 
 import assert from "node:assert/strict";
+import { InkHistory } from "../lib/draw/history.ts";
 
-import { HEIGHT, MAX_BATCHES_PER_TURN, WIDTH, floodFill, isBatch, isOp, lastStroke, nextStroke, visible, type Op } from "../lib/draw/ink.ts";
+import { HEIGHT, MAX_BATCHES_PER_TURN, WIDTH, compact, floodFill, isBatch, isOp, lastStroke, nextStroke, visible, type Op } from "../lib/draw/ink.ts";
 import {
   CHOOSE_MS,
   DEFAULT_SETTINGS,
@@ -113,6 +114,79 @@ await check("the paint bucket fills up to the lines and no further", () => {
   const before = [...pixels];
   floodFill(pixels, w, h, 2, 2, "#ef130b");
   assert.deepEqual([...pixels], before, "filling with the colour that's there changes nothing");
+});
+
+
+await check("redo restores every segment of a stroke with one fresh id", () => {
+  const history = new InkHistory();
+  const id = history.start();
+  const pieces: Op[] = [["l", id, 2, 1, 10, 10, 20, 20], ["l", id, 2, 1, 20, 20, 30, 30]];
+  pieces.forEach((op) => history.append(op));
+  assert.deepEqual(history.undo(), ["u", id]);
+  assert.deepEqual(visible(history.ops), []);
+  assert.deepEqual(history.state, { undo: false, redo: true });
+  const restored = history.redo();
+  assert.deepEqual(restored, pieces.map((op) => [op[0], 1, ...op.slice(2)]));
+  assert.ok(isBatch(restored), "redo speaks the existing multiplayer format");
+  assert.deepEqual(visible(history.ops), restored);
+  assert.deepEqual(history.state, { undo: true, redo: false });
+  assert.deepEqual(history.undo(), ["u", 1], "all the restored segments undo together");
+  assert.deepEqual(visible(history.ops), []);
+  assert.equal(history.redo()[0][1], 2, "repeated redo never reuses an undone id");
+});
+
+await check("several undos redo in drawing order, including fills and clears", () => {
+  const history = new InkHistory();
+  const line: Op = ["l", history.start(), 2, 1, 10, 10, 20, 20];
+  history.append(line);
+  history.append(["f", history.start(), 7, 300, 300]);
+  history.append(["c", history.start()]);
+  history.undo();
+  assert.deepEqual(compact(history.ops), [line, ["f", 1, 7, 300, 300]]);
+  history.undo();
+  history.undo();
+  assert.deepEqual(compact(history.ops), []);
+  assert.equal(history.undo(), null, "an empty board has no more undo");
+  const drawn = history.redo();
+  const filled = history.redo();
+  assert.deepEqual(compact(history.ops), [...drawn, ...filled]);
+  const cleared = history.redo();
+  assert.equal(cleared[0][0], "c");
+  assert.deepEqual(compact(history.ops), []);
+  history.undo();
+  assert.deepEqual(compact(history.ops), [...drawn, ...filled], "undoing a redone clear brings the drawing back");
+});
+
+await check("a new brush, fill or clear action discards the redo branch", () => {
+  for (const kind of ["l", "f", "c"] as const) {
+    const history = new InkHistory();
+    history.append(["l", history.start(), 12, 1, 10, 10]);
+    history.undo();
+    const id = history.start();
+    const op: Op = kind === "l" ? ["l", id, 0, 1, 20, 20] : kind === "f" ? ["f", id, 2, 20, 20] : ["c", id];
+    history.append(op);
+    assert.equal(history.state.redo, false);
+    assert.deepEqual(history.redo(), []);
+    assert.deepEqual(visible(history.ops), [op]);
+  }
+});
+
+await check("restoring an append-only draft preserves the picture and advances ids", () => {
+  const original = new InkHistory();
+  original.append(["l", original.start(), 12, 1, 10, 10]);
+  original.append(["l", original.start(), 0, 3, 10, 10]);
+  original.undo();
+  original.redo();
+  const restored = new InkHistory();
+  restored.restore(original.ops);
+  assert.deepEqual(compact(restored.ops), compact(original.ops));
+  assert.equal(restored.state.redo, false, "reload begins a new local redo history");
+  restored.undo();
+  assert.deepEqual(compact(restored.ops), [["l", 0, 12, 1, 10, 10]], "the restored eraser can be undone");
+  const erased = restored.redo();
+  assert.ok(erased.every(isOp));
+  assert.equal(erased[0][1], 3);
+  assert.equal(restored.start(), 4);
 });
 
 /* ---------------------------------------------------------------- room */

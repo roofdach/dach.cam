@@ -1,5 +1,6 @@
 "use client";
 
+import { type HistoryState } from "@/lib/draw/history";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Spinner } from "@/components/game/ui";
 import { Painter, Pen, Replayer, Surface, Toolbar, useTools } from "@/components/game/sketch";
@@ -38,6 +39,7 @@ export function Board({
   const pen = useRef<Pen | null>(null);
   const [ready, setReady] = useState(!mine);
   const [tools, pick] = useTools();
+  const [history, setHistory] = useState<HistoryState>({ undo: false, redo: false });
 
   useEffect(() => {
     const element = canvas.current;
@@ -48,7 +50,7 @@ export function Board({
 
     if (mine) {
       const sender = new InkSender((ops) => client.sendInk(turn, ops));
-      const own = new Pen(painter, sender);
+      const own = new Pen(painter, sender, setHistory);
       let restored = false;
       // A turn seen from its start has nothing to restore; after a reload, wait for what was drawn.
       const restore = () => {
@@ -107,7 +109,7 @@ export function Board({
       </Surface>
       {/* Kept in place while others draw on a laptop, so the board doesn't change size between turns. */}
       <div className={mine && drawing ? "" : "hidden lg:invisible lg:block"} aria-hidden={!(mine && drawing)}>
-        <Toolbar tools={tools} onPick={pick} onUndo={() => pen.current?.undo()} onClear={() => pen.current?.clear()} disabled={!live} />
+        <Toolbar tools={tools} onPick={pick} onUndo={() => pen.current?.undo()} onRedo={() => pen.current?.redo()} history={history} onClear={() => pen.current?.clear()} disabled={!live} />
       </div>
       {turn !== null && filename !== null && (
         <div className="flex justify-end">
