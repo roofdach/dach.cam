@@ -9,6 +9,7 @@ import { KEYS } from "@/components/game/storage";
 import { Button, Choice, Spinner, plural } from "@/components/game/ui";
 import { usePhoneRoom, showing, type PhoneClient, type Snapshot, type View } from "./room-client";
 import { DrawTask, FittedPicture, Picture, TextTask, forgetOldDrafts } from "./Work";
+import { SaveChain } from "./SaveChain";
 
 /** Set by the menu when you type a code with your name already in, so you go straight in. */
 export const JOIN_FLAG = "phone:join";
@@ -363,6 +364,7 @@ function Reveal({ view, me, snapshot, client }: { view: View; me: string; snapsh
           </>
         )}
         {done && total > 0 && <p className="mt-10 text-center text-[16px] font-semibold">that&rsquo;s every chain!</p>}
+        {total > 0 && <SaveChain key={game.index} view={view} client={client} />}
       </main>
 
       <footer className="fixed inset-x-0 bottom-0 border-t border-faint/50 bg-paper/95 px-4 py-3 backdrop-blur">
