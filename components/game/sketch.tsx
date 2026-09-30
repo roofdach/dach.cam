@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
-import { BLACK, COLORS, HEIGHT, SIZES, WHITE, WIDTH, floodFill, lastStroke, nextStroke, visible, type Op } from "@/lib/draw/ink";
+import { InkHistory, type HistoryState } from "@/lib/draw/history";
+import { BLACK, COLORS, HEIGHT, SIZES, WHITE, WIDTH, floodFill, visible, type Op } from "@/lib/draw/ink";
 
 /**
  * Drawing, for the games that draw: a board of 800 by 600 whatever size it
@@ -162,7 +163,7 @@ export class Replayer {
 
 /* ------------------------------------------------------------- drawing */
 
-export type Tool = "brush" | "fill";
+export type Tool = "brush" | "eraser" | "fill";
 
 export interface Tools {
   tool: Tool;
@@ -194,39 +195,57 @@ export interface InkSink {
  * the last one stopped so the pieces join up.
  */
 export class Pen {
-  ops: Op[] = [];
+  private readonly history = new InkHistory();
   private readonly painter: Painter;
   private readonly sink: InkSink | null;
   private stroke: { id: number; color: number; size: number; points: number[]; sent: number } | null = null;
-  private next = 0;
+  private readonly onHistory: ((state: HistoryState) => void) | null;
+  private reported: HistoryState = { undo: false, redo: false };
 
-  constructor(painter: Painter, sink: InkSink | null = null) {
+  constructor(painter: Painter, sink: InkSink | null = null, onHistory: ((state: HistoryState) => void) | null = null) {
     this.painter = painter;
     this.sink = sink;
+    this.onHistory = onHistory;
+  }
+
+  get ops(): Op[] {
+    return this.history.ops;
+  }
+
+  private reportHistory() {
+    const state = this.history.state;
+    state.undo ||= this.stroke !== null;
+    if (state.undo === this.reported.undo && state.redo === this.reported.redo) return;
+    this.reported = state;
+    this.onHistory?.(state);
   }
 
   /** Carries on from a drawing already begun. */
   restore(ops: Op[]) {
-    this.ops = [...ops];
-    this.next = nextStroke(ops);
+    this.history.restore(ops);
     this.painter.replay(this.ops);
+    this.reportHistory();
   }
 
   private push(op: Op) {
-    this.ops.push(op);
+    this.history.append(op);
     this.sink?.add(op);
+    this.reportHistory();
   }
 
   down(x: number, y: number, tools: Tools) {
     this.up();
+    const id = this.history.start();
     if (tools.tool === "fill") {
-      const op: Op = ["f", this.next++, tools.color, x, y];
+      const op: Op = ["f", id, tools.color, x, y];
       this.painter.op(op);
       this.push(op);
       return;
     }
-    this.stroke = { id: this.next++, color: tools.color, size: tools.size, points: [x, y], sent: 0 };
-    this.painter.line(["l", 0, tools.color, tools.size, x, y]);
+    const color = tools.tool === "eraser" ? WHITE : tools.color;
+    this.stroke = { id, color, size: tools.size, points: [x, y], sent: 0 };
+    this.painter.line(["l", 0, color, tools.size, x, y]);
+    this.reportHistory();
   }
 
   move(x: number, y: number) {
@@ -244,6 +263,7 @@ export class Pen {
   up() {
     this.cut();
     this.stroke = null;
+    this.reportHistory();
   }
 
   /** Hands on what's new of the stroke in progress. */
@@ -259,16 +279,27 @@ export class Pen {
 
   undo() {
     this.up();
-    const id = lastStroke(this.ops);
-    if (id === null) return;
-    this.push(["u", id]);
+    const op = this.history.undo();
+    if (!op) return;
+    this.sink?.add(op);
     this.painter.replay(this.ops);
+    this.reportHistory();
+  }
+
+  redo() {
+    this.up();
+    const ops = this.history.redo();
+    for (const op of ops) {
+      this.painter.op(op);
+      this.sink?.add(op);
+    }
+    this.reportHistory();
   }
 
   clear() {
     this.up();
     if (visible(this.ops).length === 0) return;
-    const op: Op = ["c", this.next++];
+    const op: Op = ["c", this.history.start()];
     this.painter.op(op);
     this.push(op);
   }
@@ -316,14 +347,16 @@ export function Surface({
     return () => observer.disconnect();
   }, []);
 
-  // Ctrl+Z, or ⌘Z, takes back a stroke.
+  // Undo/redo shortcuts leave text inputs to their own editing history.
   useEffect(() => {
     if (!live) return;
     const onKey = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "z" && !isTyping(event.target)) {
-        event.preventDefault();
-        pen?.current?.undo();
-      }
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || isTyping(event.target)) return;
+      const key = event.key.toLowerCase();
+      if (key !== "z" && !(key === "y" && !event.shiftKey)) return;
+      event.preventDefault();
+      if (event.shiftKey || key === "y") pen?.current?.redo();
+      else pen?.current?.undo();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -342,7 +375,7 @@ export function Surface({
   const showCursor = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const ring = cursor.current;
     if (!ring) return;
-    if (!live || tools.tool !== "brush" || event.pointerType === "touch") {
+    if (!live || tools.tool === "fill" || event.pointerType === "touch") {
       ring.style.opacity = "0";
       return;
     }
@@ -393,7 +426,7 @@ export function Surface({
           aria-label={label}
           role="img"
           className="block size-full touch-none select-none"
-          style={{ cursor: live ? (tools.tool === "brush" ? "none" : "crosshair") : "default" }}
+          style={{ cursor: live ? (tools.tool === "fill" ? "crosshair" : "none") : "default" }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -430,7 +463,7 @@ function ToolButton({ label, pressed, onClick, disabled, children }: { label: st
       aria-pressed={pressed}
       onClick={onClick}
       disabled={disabled}
-      className="grid size-9 place-items-center rounded-lg border border-faint/70 text-ink transition-colors hover:border-ink/40 aria-pressed:border-ink aria-pressed:bg-ink aria-pressed:text-paper disabled:opacity-50"
+      className="grid size-11 place-items-center sm:size-9 [@media(pointer:coarse)]:size-11 rounded-lg border border-faint/70 text-ink transition-colors hover:border-ink/40 aria-pressed:border-ink aria-pressed:bg-ink aria-pressed:text-paper disabled:opacity-50"
     >
       {children}
     </button>
@@ -441,38 +474,42 @@ export function Toolbar({
   tools,
   onPick,
   onUndo,
+  onRedo,
   onClear,
+  history,
   disabled,
   children,
 }: {
   tools: Tools;
   onPick: (patch: Partial<Tools>) => void;
   onUndo: () => void;
+  onRedo: () => void;
   onClear: () => void;
+  history: HistoryState;
   disabled: boolean;
   /** More at the end of the row, like a "done" button. */
   children?: ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
-      <div role="group" aria-label="colour" className="grid grid-cols-12 overflow-hidden rounded-md shadow-[0_0_0_1px_rgb(0_0_0/0.15)]">
+      <div role="group" aria-label="colour" className="grid grid-cols-6 overflow-hidden sm:grid-cols-12 [@media(pointer:coarse)]:grid-cols-6 rounded-md shadow-[0_0_0_1px_rgb(0_0_0/0.15)]">
         {COLORS.map((color, i) => (
           <button
             key={color}
             type="button"
             title={COLOR_NAMES[i]}
             aria-label={COLOR_NAMES[i]}
-            aria-pressed={tools.color === i}
+            aria-pressed={tools.tool !== "eraser" && tools.color === i}
             disabled={disabled}
-            onClick={() => onPick({ color: i })}
-            className="relative size-[22px] aria-pressed:z-10 aria-pressed:shadow-[inset_0_0_0_2px_#fff,0_0_0_2px_var(--ink)]"
+            onClick={() => onPick({ color: i, tool: tools.tool === "eraser" ? "brush" : tools.tool })}
+            className="relative size-11 sm:size-[22px] [@media(pointer:coarse)]:size-11 aria-pressed:z-10 aria-pressed:shadow-[inset_0_0_0_2px_#fff,0_0_0_2px_var(--ink)]"
             style={{ background: color }}
           />
         ))}
       </div>
       <div role="group" aria-label="brush size" className="flex gap-1">
         {SIZES.map((size, i) => (
-          <ToolButton key={size} label={`${SIZE_NAMES[i]} brush`} pressed={tools.size === i} onClick={() => onPick({ size: i, tool: "brush" })} disabled={disabled}>
+          <ToolButton key={size} label={`${SIZE_NAMES[i]} brush`} pressed={tools.size === i} onClick={() => onPick({ size: i, tool: tools.tool === "eraser" ? "eraser" : "brush" })} disabled={disabled}>
             <span className="rounded-full bg-current" style={{ width: 3 + i * 5, height: 3 + i * 5 }} />
           </ToolButton>
         ))}
@@ -481,6 +518,11 @@ export function Toolbar({
         <ToolButton label="brush" pressed={tools.tool === "brush"} onClick={() => onPick({ tool: "brush" })} disabled={disabled}>
           <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+          </svg>
+        </ToolButton>
+        <ToolButton label="eraser" pressed={tools.tool === "eraser"} onClick={() => onPick({ tool: "eraser" })} disabled={disabled}>
+          <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="m15 3 6 6a2 2 0 0 1 0 3l-8 8H7l-4-4a2 2 0 0 1 0-3l9-10a2 2 0 0 1 3 0ZM8 8l9 9M13 20h8" />
           </svg>
         </ToolButton>
         <ToolButton label="fill" pressed={tools.tool === "fill"} onClick={() => onPick({ tool: "fill" })} disabled={disabled}>
@@ -492,10 +534,16 @@ export function Toolbar({
         </ToolButton>
       </div>
       <div className="flex gap-1">
-        <ToolButton label="undo (ctrl+z)" onClick={onUndo} disabled={disabled}>
+        <ToolButton label="undo (ctrl+z)" onClick={onUndo} disabled={disabled || !history.undo}>
           <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M9 14 4 9l5-5" />
             <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+          </svg>
+        </ToolButton>
+        <ToolButton label="redo (ctrl+shift+z)" onClick={onRedo} disabled={disabled || !history.redo}>
+          <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="m15 14 5-5-5-5" />
+            <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
           </svg>
         </ToolButton>
         <ToolButton label="clear the board" onClick={onClear} disabled={disabled}>

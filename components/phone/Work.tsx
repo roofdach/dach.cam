@@ -1,5 +1,6 @@
 "use client";
 
+import { type HistoryState } from "@/lib/draw/history";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { isOp, type Op } from "@/lib/draw/ink";
 import { MAX_TEXT, fitDrawing } from "@/lib/phone/room";
@@ -135,6 +136,7 @@ export function DrawTask({ draft, ends, busy, onHandIn }: { draft: string; ends:
   const canvas = useRef<HTMLCanvasElement>(null);
   const pen = useRef<Pen | null>(null);
   const [tools, pick] = useTools();
+  const [history, setHistory] = useState<HistoryState>({ undo: false, redo: false });
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
@@ -142,7 +144,7 @@ export function DrawTask({ draft, ends, busy, onHandIn }: { draft: string; ends:
     if (!element) return;
     const painter = new Painter(element);
     // Every stroke is kept as it's finished, so a reload carries on where you were.
-    const own: Pen = new Pen(painter, { add: () => save(draft, own.ops) });
+    const own: Pen = new Pen(painter, { add: () => save(draft, own.ops) }, setHistory);
     const saved = load(draft, isOps);
     if (saved) own.restore(saved);
     pen.current = own;
@@ -168,7 +170,7 @@ export function DrawTask({ draft, ends, busy, onHandIn }: { draft: string; ends:
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col gap-2">
       <Surface canvas={canvas} pen={pen} live={!busy} tools={tools} label="your drawing" />
-      <Toolbar tools={tools} onPick={pick} onUndo={() => pen.current?.undo()} onClear={() => pen.current?.clear()} disabled={busy}>
+      <Toolbar tools={tools} onPick={pick} onUndo={() => pen.current?.undo()} onRedo={() => pen.current?.redo()} history={history} onClear={() => pen.current?.clear()} disabled={busy}>
         <Button tone="solid" onClick={() => void handIn()} disabled={busy} className="min-h-10 px-5">
           {busy ? <Spinner /> : "done"}
         </Button>
