@@ -98,6 +98,8 @@ what it costs to run: while someone's drawing, each player asks for the room and
 
 a gartic phone, at `/phone`. everyone writes something odd; then each sentence goes round the room, drawn by the next person, described by the one after, drawn again, until every chain has been through everyone once. then the host clicks through each chain a step at a time, so everyone sees together how "a dog on a skateboard" became something else entirely. the host picks quick, normal or slow (60, 90 or 150 seconds to draw). two to twelve players, best with four or more, joining the same way as draw: a four-letter code at `/phone`. it uses the same redis database as the other rooms.
 
+once a whole chain has been shown, anyone can **save chain** as a PNG with its sentences, drawings and names. the picker includes earlier revealed chains, even after reloading. save the ones you want before starting another game. in draw, **save drawing** downloads the current artwork as an 800 by 600 PNG, with fills, clears and undos included. images are made in your browser; they aren't uploaded anywhere.
+
 ### how it works
 
 - **the rules** are another replayed log, [`lib/phone/room.ts`](lib/phone/room.ts): who handed something in at which step. chains pass round the seats in order, so each meets everyone once. a step ends when everyone still here has handed in, or when its time is up.

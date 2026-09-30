@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Spinner } from "@/components/game/ui";
 import { Painter, Pen, Replayer, Surface, Toolbar, useTools } from "@/components/game/sketch";
 import { InkSender, type DrawClient } from "./room-client";
+import { drawingImage } from "@/components/game/image-export";
+import { SaveImage } from "@/components/game/SaveImage";
 
 /** How often the stroke in progress is sent: each send is a request and a database write, and the replay smooths it out. */
 const SEND_MS = 400;
@@ -19,6 +21,7 @@ export function Board({
   turn,
   mine,
   drawing,
+  filename,
   children,
 }: {
   client: DrawClient;
@@ -28,6 +31,7 @@ export function Board({
   mine: boolean;
   /** You can draw right now. */
   drawing: boolean;
+  filename: string | null;
   children?: ReactNode;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -105,6 +109,16 @@ export function Board({
       <div className={mine && drawing ? "" : "hidden lg:invisible lg:block"} aria-hidden={!(mine && drawing)}>
         <Toolbar tools={tools} onPick={pick} onUndo={() => pen.current?.undo()} onClear={() => pen.current?.clear()} disabled={!live} />
       </div>
+      {turn !== null && filename !== null && (
+        <div className="flex justify-end">
+          <SaveImage label="save drawing" filename={filename} makeImage={() => {
+            const book = client.ink;
+            if (book.turn !== turn || !book.synced) throw new Error("still getting the drawing; try again in a moment");
+            pen.current?.up();
+            return drawingImage(pen.current?.ops ?? book.batches.flat());
+          }} />
+        </div>
+      )}
     </div>
   );
 }

@@ -227,7 +227,7 @@ function Game({ view, me, snapshot, client }: { view: View; me: string; snapshot
 
       <div className="grid min-h-0 flex-1 gap-3 p-3 lg:grid-cols-[12.5rem_minmax(0,1fr)_17.5rem] sm:p-4">
         <div className="flex min-h-0 flex-col lg:order-2">
-          <Board key={turn ? `turn:${turn.id}` : `over:${game.index}`} client={client} turn={turn?.id ?? null} mine={myTurn} drawing={drawing}>
+          <Board key={turn ? `turn:${turn.id}` : `over:${game.index}`} client={client} turn={turn?.id ?? null} mine={myTurn} drawing={drawing} filename={turn && turn.phase !== "choosing" ? `draw-${view.code}-${game.index}-${turn.id}` : null}>
             <Overlay view={view} me={me} host={host} snapshot={snapshot} client={client} drawerName={drawerName} />
           </Board>
           <ErrorLine snapshot={snapshot} client={client} />

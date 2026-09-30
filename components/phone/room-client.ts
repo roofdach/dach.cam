@@ -316,6 +316,20 @@ export class PhoneClient {
     return this.act("show", { game: game.index, n: game.shown + 1 });
   }
 
+  /** Read a finished chain on demand, so earlier chains can be saved after a reload. */
+  async chainEntries(game: number, chain: number): Promise<Entry[]> {
+    const key = `${game}.${chain}`;
+    const cached = this.snapshot.chains[key];
+    if (cached) return cached;
+    const response = await fetch(`/api/phone/rooms/${this.code}?chain=${key}`, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error("couldn't load that chain; check your connection and try again");
+    const body = await response.json() as PhoneView;
+    if (!body.chain || body.chain.game !== game || body.chain.chain !== chain) throw new Error("that chain isn't available anymore");
+    const entries = body.chain.entries;
+    if (this.snapshot.view?.game?.index === game) this.set({ chains: { ...this.snapshot.chains, [key]: entries } });
+    return entries;
+  }
+
   private async ping() {
     const identity = this.identity;
     if (!identity || !this.running) return;
