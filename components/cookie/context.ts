@@ -15,7 +15,7 @@ export function useCookieGame(): CookieGame {
 
 /**
  * Reads one value out of the game and re-renders only when it changes. The
- * game ticks every frame, so a selector should return something small and
+ * game ticks up to twenty times a second, so a selector should return something small and
  * plain (a number, a string, a boolean), never a fresh object or array.
  */
 export function useGame<T extends string | number | boolean | null | undefined>(

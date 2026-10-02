@@ -336,7 +336,7 @@ export class Engine {
     const moved = distance(was, this.pos) > 0.01;
     if (moved) this.movedAt = now;
     const moving = moved;
-    if (moving && !this.moving) this.kick();
+    if (moving !== this.moving) this.kick();
     this.moving = moving;
     this.reportZone();
     this.follow(now);
@@ -391,7 +391,7 @@ export class Engine {
     for (let i = samples.length - 2; i >= 0; i--) {
       const a = samples[i];
       const b = samples[i + 1];
-      if (a.t > t) continue;
+      if (a.t > t || b.t < t) continue;
       const k = (t - a.t) / Math.max(1, b.t - a.t);
       // A jump, out of a vent or onto someone, isn't walked.
       if (Math.hypot(b.x - a.x, b.y - a.y) > 400 || a.v !== b.v) return k < 0.5 ? a : b;
@@ -399,7 +399,7 @@ export class Engine {
     }
     const last = samples[samples.length - 1];
     const before = samples[samples.length - 2];
-    if (!last.m || !before || last.v) return last;
+    if (!last.m || !before || last.v || before.v !== last.v || distance(before, last) > 400) return last;
     // A little past the last word, guess they kept going.
     const ahead = Math.min(GUESS_MS, t - last.t);
     const span = Math.max(1, last.t - before.t);
@@ -527,6 +527,7 @@ export class Engine {
     if (!this.attached || this.posting) return;
     clearTimeout(this.postTimer);
     this.posting = true;
+    const sentAt = performance.now();
     let busy = false;
     try {
       if (this.playing) {
@@ -540,7 +541,7 @@ export class Engine {
       this.quick = busy;
     } finally {
       this.posting = false;
-      if (this.attached) this.postTimer = setTimeout(() => void this.post(), busy ? WALK_POST_MS : IDLE_POST_MS);
+      if (this.attached) this.postTimer = setTimeout(() => void this.post(), Math.max(50, (busy ? WALK_POST_MS : IDLE_POST_MS) - (performance.now() - sentAt)));
     }
   }
 

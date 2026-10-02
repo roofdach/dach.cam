@@ -24,6 +24,8 @@ export const SNAKE_COLORS = ["#4a7cf0", "#e0457b", "#8e5bd9", "#f08a2c", "#2bb5a
 
 const at = (c: number) => [c % COLS, Math.floor(c / COLS)] as const;
 
+let checkerboard: Path2D | undefined;
+
 function apple(ctx: CanvasRenderingContext2D, c: number, gold: boolean, pulse: number) {
   const [x, y] = at(c);
   const r = 0.36 + (gold ? pulse * 0.04 : 0);
@@ -51,12 +53,17 @@ function apple(ctx: CanvasRenderingContext2D, c: number, gold: boolean, pulse: n
 export function drawBoard(ctx: CanvasRenderingContext2D, look: SnakeLook, size: number, time: number) {
   ctx.save();
   ctx.scale(size, size);
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      ctx.fillStyle = (r + c) % 2 ? "#a2d149" : "#aad751";
-      ctx.fillRect(c, r, 1, 1);
+  // Reuse the static squares on the main board and every race preview.
+  if (!checkerboard) {
+    checkerboard = new Path2D();
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = (r + 1) % 2; c < COLS; c += 2) checkerboard.rect(c, r, 1, 1);
     }
   }
+  ctx.fillStyle = "#aad751";
+  ctx.fillRect(0, 0, COLS, ROWS);
+  ctx.fillStyle = "#a2d149";
+  ctx.fill(checkerboard);
   const pulse = (Math.sin(time / 120) + 1) / 2;
   if (look.apple >= 0) apple(ctx, look.apple, false, 0);
   if (look.gold >= 0) {

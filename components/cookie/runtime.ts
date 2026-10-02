@@ -299,7 +299,8 @@ export class CookieGame {
 
   private onFrame = () => {
     if (this.status !== "playing") return;
-    this.tick(true);
+    // Counters need 20 updates/sec; CSS animates independently. Tick consumes all elapsed time.
+    if (Date.now() - this.lastTick >= 50) this.tick(true);
     this.frame = requestAnimationFrame(this.onFrame);
   };
 

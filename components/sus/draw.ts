@@ -479,6 +479,9 @@ interface Figure {
   draw: () => void;
 }
 
+// Each stage owns its fog canvas; only movement or a view change alters its mask.
+const fogViews = new WeakMap<HTMLCanvasElement, string>();
+
 /** The game as you see it, with the dark beyond what you can see. */
 export function drawScene(ctx: CanvasRenderingContext2D, fog: HTMLCanvasElement, e: Engine, w: number, h: number, dpr: number, t: number) {
   const view = e.view;
@@ -561,26 +564,30 @@ export function drawScene(ctx: CanvasRenderingContext2D, fog: HTMLCanvasElement,
   if (range !== Infinity) {
     const f = fog.getContext("2d");
     if (f) {
-      if (fog.width !== ctx.canvas.width || fog.height !== ctx.canvas.height) {
-        fog.width = ctx.canvas.width;
-        fog.height = ctx.canvas.height;
+      const key = [me.x, me.y, range, mine.dark, w, h, dpr, ctx.canvas.width, ctx.canvas.height].join("|");
+      if (fogViews.get(fog) !== key) {
+        if (fog.width !== ctx.canvas.width || fog.height !== ctx.canvas.height) {
+          fog.width = ctx.canvas.width;
+          fog.height = ctx.canvas.height;
+        }
+        f.setTransform(1, 0, 0, 1, 0, 0);
+        f.globalCompositeOperation = "source-over";
+        f.clearRect(0, 0, fog.width, fog.height);
+        f.fillStyle = mine.dark ? "rgba(3, 4, 8, 0.97)" : "rgba(5, 7, 13, 0.82)";
+        f.fillRect(0, 0, fog.width, fog.height);
+        f.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
+        f.globalCompositeOperation = "destination-out";
+        const glow = f.createRadialGradient(me.x, me.y, range * 0.62, me.x, me.y, range);
+        glow.addColorStop(0, "rgba(0, 0, 0, 1)");
+        glow.addColorStop(1, "rgba(0, 0, 0, 0)");
+        f.fillStyle = glow;
+        const shape = visibility(me, range);
+        f.beginPath();
+        shape.forEach((p, i) => (i ? f.lineTo(p.x, p.y) : f.moveTo(p.x, p.y)));
+        f.closePath();
+        f.fill();
+        fogViews.set(fog, key);
       }
-      f.setTransform(1, 0, 0, 1, 0, 0);
-      f.globalCompositeOperation = "source-over";
-      f.clearRect(0, 0, fog.width, fog.height);
-      f.fillStyle = mine.dark ? "rgba(3, 4, 8, 0.97)" : "rgba(5, 7, 13, 0.82)";
-      f.fillRect(0, 0, fog.width, fog.height);
-      f.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
-      f.globalCompositeOperation = "destination-out";
-      const glow = f.createRadialGradient(me.x, me.y, range * 0.62, me.x, me.y, range);
-      glow.addColorStop(0, "rgba(0, 0, 0, 1)");
-      glow.addColorStop(1, "rgba(0, 0, 0, 0)");
-      f.fillStyle = glow;
-      const shape = visibility(me, range);
-      f.beginPath();
-      shape.forEach((p, i) => (i ? f.lineTo(p.x, p.y) : f.moveTo(p.x, p.y)));
-      f.closePath();
-      f.fill();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.drawImage(fog, 0, 0);
     }

@@ -34,6 +34,7 @@ export function FlapRace({ round, me, names, playing, finished, client }: PlayPr
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const loop = async () => {
+      const sentAt = performance.now();
       const bird = mine.current;
       const data = JSON.stringify(bird && playing ? { k: bird.tick, y: Math.round(bird.y * 10) / 10, s: bird.score, d: out.current ? 1 : 0 } : { k: -1, y: 0, s: 0, d: 1 });
       const heard = await client.live(data);
@@ -52,7 +53,7 @@ export function FlapRace({ round, me, names, playing, finished, client }: PlayPr
         if (ghost.samples.length > 40) ghost.samples.splice(0, ghost.samples.length - 40);
         ghosts.current.set(id, ghost);
       }
-      timer = setTimeout(() => void loop(), LIVE_MS);
+      timer = setTimeout(() => void loop(), Math.max(50, LIVE_MS - (performance.now() - sentAt)));
     };
     void loop();
     return () => {

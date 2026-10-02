@@ -104,11 +104,13 @@ export class ShapeClient {
     return Math.min(game.phase === "playing" ? 1000 : 1500, until > 0 ? until + 250 : 600);
   }
 
-  private schedule() {
+  private schedule(sentAt: number) {
     if (!this.running) return;
     clearTimeout(this.pollTimer);
     const base = this.delay();
-    this.pollTimer = setTimeout(() => void this.poll(), this.failures ? Math.min(15_000, base * 2 ** this.failures) : base);
+    // Include the request in the cadence; retain full delays when hidden or retrying.
+    const wait = document.visibilityState === "visible" ? Math.max(100, base - Math.max(0, Date.now() - sentAt)) : base;
+    this.pollTimer = setTimeout(() => void this.poll(), this.failures ? Math.min(15_000, base * 2 ** this.failures) : wait);
   }
 
   private async poll() {
@@ -127,7 +129,7 @@ export class ShapeClient {
       this.failures++;
       if (this.failures >= 3 && !this.snapshot.offline) this.set({ offline: true });
     } finally {
-      if (this.snapshot.status !== "missing" && this.snapshot.status !== "unavailable") this.schedule();
+      if (this.snapshot.status !== "missing" && this.snapshot.status !== "unavailable") this.schedule(sentAt);
     }
   }
 

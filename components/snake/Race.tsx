@@ -45,6 +45,7 @@ export function SnakeRace({ round, me, names, playing, finished, client }: PlayP
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const loop = async () => {
+      const sentAt = performance.now();
       const s = mine.current;
       const data = JSON.stringify(s && playing ? { k: s.step, b: packBody(s.body), a: s.apple, g: s.gold?.cell ?? -1, s: s.score, d: out.current ? 1 : 0, r: s.dir } : { k: -1, b: "", a: -1, g: -1, s: 0, d: 1, r: 1 });
       const heard = await client.live(data);
@@ -63,7 +64,7 @@ export function SnakeRace({ round, me, names, playing, finished, client }: PlayP
       }
       for (const [id, seen] of boards.current) next[id] = { s: seen.s, d: seen.d };
       setScores((old) => (JSON.stringify(old) === JSON.stringify(next) ? old : next));
-      timer = setTimeout(() => void loop(), LIVE_MS);
+      timer = setTimeout(() => void loop(), Math.max(50, LIVE_MS - (performance.now() - sentAt)));
     };
     void loop();
     return () => {
